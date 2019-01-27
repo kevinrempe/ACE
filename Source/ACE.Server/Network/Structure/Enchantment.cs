@@ -5,115 +5,64 @@ using ACE.Database.Models.Shard;
 using ACE.DatLoader.Entity;
 using ACE.Entity.Enum;
 using ACE.Server.Entity;
-using ACE.Server.Managers;
 using ACE.Server.WorldObjects;
 
 namespace ACE.Server.Network.Structure
 {
     public class Enchantment
     {
-        public ushort SpellID;
+        public WorldObject Target;
+        public uint CasterGuid;
+        public Spell Spell;
         public ushort Layer;
-        public ushort HasSpellSetID = 1; // default true?
-        public ushort SpellCategory;
-        public uint PowerLevel;
+        public EnchantmentMask EnchantmentMask;
         public double StartTime;
         public double Duration;
-        public uint CasterGuid;     // can be from items
-        public float DegradeModifier;
-        public float DegradeLimit;
-        public double LastTimeDegraded;
-        public EnchantmentTypeFlags StatModType;
-        public uint StatModKey;
-        public float StatModValue;
-        public uint SpellSetID;     // only sent if HasSpellSetID = true
+        public float? StatMod;
 
-        // not sent in network structure
-        public WorldObject Target;
-        public Spell Spell;
-        public EnchantmentMask EnchantmentMask;
-
-        public Enchantment(WorldObject target, uint casterGuid, uint spellId, ushort layer, EnchantmentMask enchantmentMask, float? statModVal = null)
+        public Enchantment(WorldObject target, uint casterGuid, uint spellId, double duration, ushort layer, EnchantmentMask enchantmentMask, float? statMod = null)
         {
-            // 2 references left, can this use BiotaPropertiesEnchantment?
-            Init(new Spell(spellId));
-
-            Layer = layer;
-            CasterGuid = casterGuid;
-            StatModValue = statModVal ?? Spell.StatModVal;
-
             Target = target;
+            CasterGuid = casterGuid;
+            Spell = new Spell(spellId);
+            Layer = layer;
+            Duration = duration;
             EnchantmentMask = enchantmentMask;
+            StatMod = statMod ?? Spell.StatModVal;
         }
 
-        public Enchantment(WorldObject target, SpellBase spellBase, ushort layer, EnchantmentMask enchantmentMask, float? statModVal = null)
+        public Enchantment(WorldObject target, uint casterGuid, SpellBase spellBase, double duration, ushort layer, EnchantmentMask enchantmentMask, float? statMod = null)
         {
-            // should be able to replace this with cooldown constructor
-            Init(new Spell(spellBase.MetaSpellId));
-
-            Layer = layer;
-            CasterGuid = target.Guid.Full;
-            StatModValue = statModVal ?? 35.0f;
-
             Target = target;
+            CasterGuid = casterGuid;
+            Spell = new Spell(spellBase.MetaSpellId);
+            Layer = layer;
+            Duration = duration;
             EnchantmentMask = enchantmentMask;
+            StatMod = statMod;
         }
 
         public Enchantment(WorldObject target, BiotaPropertiesEnchantmentRegistry entry)
         {
-            if (entry.SpellCategory == EnchantmentManager.SpellCategory_Cooldown)
-            {
-                InitCooldown(target, entry);
-                return;
-            }
-
-            Init(new Spell((uint)entry.SpellId));
-
-            Layer = entry.LayerId;
-            StartTime = entry.StartTime;
-            CasterGuid = entry.CasterObjectId;
-            StatModValue = entry.StatModValue;
-
             Target = target;
-            EnchantmentMask = (EnchantmentMask)entry.EnchantmentCategory;
-        }
-
-        public void Init(Spell spell)
-        {
-            Spell = spell;
-            SpellID = (ushort)spell.Id;
-            SpellCategory = (ushort)spell.Category;
-            PowerLevel = spell.Power;
-            Duration = spell.Duration;
-            DegradeModifier = spell.DegradeModifier;
-            DegradeLimit = spell.DegradeLimit;
-
-            if (spell._spell != null)
-            {
-                StatModType = spell.StatModType;
-                StatModKey = spell.StatModKey;
-            }
-        }
-
-        public void InitCooldown(WorldObject target, BiotaPropertiesEnchantmentRegistry entry)
-        {
-            SpellID = (ushort)entry.SpellId;
+            CasterGuid = entry.CasterObjectId;
+            Spell = new Spell((uint)entry.SpellId);
             Layer = entry.LayerId;
-            SpellCategory = entry.SpellCategory;
             StartTime = entry.StartTime;
             Duration = entry.Duration;
-            CasterGuid = entry.CasterObjectId;
-            DegradeModifier = entry.DegradeModifier;
-            DegradeLimit = entry.DegradeLimit;
-            LastTimeDegraded = entry.LastTimeDegraded;
-            StatModType = (EnchantmentTypeFlags)entry.StatModType;
-            StatModKey = entry.StatModKey;
-            StatModValue = entry.StatModValue;
+            EnchantmentMask = (EnchantmentMask)entry.EnchantmentCategory;
+            StatMod = entry.StatModValue;
         }
     }
 
     public static class EnchantmentExtensions
     {
+        public static readonly double LastTimeDegraded = 0;
+        public static readonly float DefaultStatMod = 35.0f;
+
+        public static readonly ushort HasSpellSetId = 1;
+        public static readonly uint SpellSetId = 0;
+
         public static void Write(this BinaryWriter writer, List<Enchantment> enchantments)
         {
             writer.Write(enchantments.Count);
@@ -123,23 +72,26 @@ namespace ACE.Server.Network.Structure
 
         public static void Write(this BinaryWriter writer, Enchantment enchantment)
         {
-            writer.Write(enchantment.SpellID);
-            var layer = enchantment.SpellID == (ushort)SpellId.Vitae ? (ushort)0 : enchantment.Layer; // this line is to force vitae to be layer 0 to match retail pcaps. We save it as layer 1 to make EF Core happy.
+            var spell = enchantment.Spell;
+            var statModType = spell.StatModType;
+            var statModKey = spell.StatModKey;
+
+            writer.Write((ushort)enchantment.Spell.Id);
+            var layer = (spell.Id == (uint)SpellId.Vitae) ? (ushort)0 : enchantment.Layer; // this line is to force vitae to be layer 0 to match retail pcaps. We save it as layer 1 to make EF Core happy.
             writer.Write(layer);
-            writer.Write(enchantment.SpellCategory);
-            writer.Write(enchantment.HasSpellSetID);
-            writer.Write(enchantment.PowerLevel);
+            writer.Write((ushort)enchantment.Spell.Category);
+            writer.Write(HasSpellSetId);
+            writer.Write(enchantment.Spell.Power);
             writer.Write(enchantment.StartTime);
             writer.Write(enchantment.Duration);
             writer.Write(enchantment.CasterGuid);
-            writer.Write(enchantment.DegradeModifier);
-            writer.Write(enchantment.DegradeLimit);
-            writer.Write(enchantment.LastTimeDegraded);     // always 0 / spell economy?
-            writer.Write((uint)enchantment.StatModType);
-            writer.Write(enchantment.StatModKey);
-            writer.Write(enchantment.StatModValue);
-            if (enchantment.HasSpellSetID != 0)
-                writer.Write(enchantment.SpellSetID);
+            writer.Write(enchantment.Spell.DegradeModifier);
+            writer.Write(enchantment.Spell.DegradeLimit);
+            writer.Write(LastTimeDegraded);     // always 0 / spell economy?
+            writer.Write((uint)statModType);
+            writer.Write(statModKey);
+            writer.Write(enchantment.StatMod ?? DefaultStatMod);
+            writer.Write(SpellSetId);
         }
     }
 }
