@@ -541,7 +541,9 @@ namespace ACE.Entity.Enum.Properties
         [ServerOnly]
         CurrentLoyaltyAtLastLogoff              = 9008,
         [ServerOnly]
-        CurrentLeadershipAtLastLogoff           = 9009
+        CurrentLeadershipAtLastLogoff           = 9009,
+        [ServerOnly]
+        AllegianceOfficerRank                   = 9010
     }
 
     public static class PropertyIntExtensions
@@ -669,6 +671,10 @@ namespace ACE.Entity.Enum.Properties
 
                 case PropertyInt.ArmorType:
                     return System.Enum.GetName(typeof(ArmorType), value);
+                case PropertyInt.ParentLocation:
+                    return System.Enum.GetName(typeof(ParentLocation), value);
+                case PropertyInt.PlacementPosition:
+                    return System.Enum.GetName(typeof(Placement), value);
             }
 
             return null;

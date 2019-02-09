@@ -43,9 +43,7 @@ namespace ACE.Server.WorldObjects
         {
             var strength = Attributes[PropertyAttribute.Strength].Current;
 
-            var encumbranceAgumentations = 0; // todo
-
-            return (int)((150 * strength) + (encumbranceAgumentations * 30 * strength));
+            return (int)((150 * strength) + (AugmentationIncreasedCarryingCapacity * 30 * strength));
         }
 
         public bool HasEnoughBurdenToAddToInventory(WorldObject worldObject)
@@ -313,6 +311,11 @@ namespace ACE.Server.WorldObjects
             Everywhere          = 0xFF
         }
 
+        public WorldObject FindObject(uint objectGuid, SearchLocations searchLocations)
+        {
+            return FindObject(new ObjectGuid(objectGuid), searchLocations, out Container foundInContainer, out Container rootOwner, out bool wasEquipped);
+        }
+
         public WorldObject FindObject(uint objectGuid, SearchLocations searchLocations, out Container foundInContainer, out Container rootOwner, out bool wasEquipped)
         {
             return FindObject(new ObjectGuid(objectGuid), searchLocations, out foundInContainer, out rootOwner, out wasEquipped); // todo Fix this so it's not creating a new ObjectGuid
@@ -511,7 +514,7 @@ namespace ACE.Server.WorldObjects
 
             if (containerRootOwner != this) // Is our target on the landscape?
             {
-                if (itemRootOwner == this && (item.Attuned ?? 0) == 1)
+                if (itemRootOwner == this && (item.Attuned ?? 0) >= 1)
                 {
                     Session.Network.EnqueueSend(new GameEventInventoryServerSaveFailed(Session, itemGuid, WeenieError.AttunedItem));
                     return;
@@ -677,6 +680,7 @@ namespace ACE.Server.WorldObjects
                     // the player will end up loading with this object in their inventory even though the landblock is the true owner. This is because
                     // when we load player inventory, the database still has the record that shows this player as the ContainerId for the item.
                     item.SaveBiotaToDatabase();
+                    container.SaveBiotaToDatabase();
                 }
             }
 
@@ -721,7 +725,7 @@ namespace ACE.Server.WorldObjects
                 return;
             }
 
-            if ((item.Attuned ?? 0) == 1)
+            if ((item.Attuned ?? 0) >= 1)
             {
                 Session.Network.EnqueueSend(new GameEventInventoryServerSaveFailed(Session, itemGuid, WeenieError.AttunedItem));
                 return;
@@ -1529,7 +1533,7 @@ namespace ACE.Server.WorldObjects
 
         private void GiveObjecttoPlayer(Player target, WorldObject item, Container itemFoundInContainer, Container itemRootOwner, bool itemWasEquipped, int amount)
         {
-            if ((item.Attuned ?? 0) == 1)
+            if ((item.Attuned ?? 0) >= 1)
             {
                 Session.Network.EnqueueSend(new GameEventInventoryServerSaveFailed(Session, item.Guid.Full, WeenieError.AttunedItem));
                 return;
@@ -1597,7 +1601,7 @@ namespace ACE.Server.WorldObjects
                 return;
             }
 
-            var acceptAll = target.GetProperty(PropertyBool.AiAcceptEverything) ?? false;
+            var acceptAll = (target.GetProperty(PropertyBool.AiAcceptEverything) ?? false) && (item.Attuned ?? 0) != (int)AttunedStatus.Sticky;
 
             var result = target.Biota.BiotaPropertiesEmote.FirstOrDefault(emote => emote.WeenieClassId == item.WeenieClassId);
 
