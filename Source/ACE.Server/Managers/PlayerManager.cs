@@ -122,6 +122,19 @@ namespace ACE.Server.Managers
             return null;
         }
 
+        public static List<IPlayer> GetAllPlayers()
+        {
+            var offlinePlayers = GetAllOffline();
+            var onlinePlayers = GetAllOnline();
+
+            var allPlayers = new List<IPlayer>();
+
+            allPlayers.AddRange(offlinePlayers);
+            allPlayers.AddRange(onlinePlayers);
+
+            return allPlayers;
+        }
+
         public static List<OfflinePlayer> GetAllOffline()
         {
             var results = new List<OfflinePlayer>();
@@ -269,8 +282,19 @@ namespace ACE.Server.Managers
             }
 
             player.SendFriendStatusUpdates(false);
+            player.HandleAllegianceOnLogout();
 
             return true;
+        }
+
+        /// <summary>
+        /// Called when a character is initially deleted on the character select screen
+        /// </summary>
+        public static void HandlePlayerDelete(uint characterGuid)
+        {
+            AllegianceManager.HandlePlayerDelete(characterGuid);
+
+            HouseManager.HandlePlayerDelete(characterGuid);
         }
 
         /// <summary>
@@ -284,8 +308,6 @@ namespace ACE.Server.Managers
             {
                 if (!offlinePlayers.Remove(guid, out var offlinePlayer))
                     return false; // This should never happen
-
-                // TODO break allegiance, etc...
             }
             finally
             {

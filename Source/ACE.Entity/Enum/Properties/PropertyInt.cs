@@ -18,7 +18,7 @@ namespace ACE.Entity.Enum.Properties
         [ServerOnly]
         PaletteTemplate                          = 3,
         ClothingPriority                         = 4,
-        [Ephemeral][SendOnLogin]
+        [SendOnLogin]
         EncumbranceVal                           = 5, // ENCUMB_VAL_INT,
         [SendOnLogin]
         ItemsCapacity                            = 6,
@@ -45,7 +45,6 @@ namespace ACE.Entity.Enum.Properties
         RareId                                   = 17,
         [ServerOnly]
         UiEffects                                = 18,
-        [Ephemeral]
         Value                                    = 19,
         [Ephemeral][SendOnLogin]
         CoinValue                                = 20,
@@ -543,7 +542,9 @@ namespace ACE.Entity.Enum.Properties
         [ServerOnly]
         CurrentLeadershipAtLastLogoff           = 9009,
         [ServerOnly]
-        AllegianceOfficerRank                   = 9010
+        AllegianceOfficerRank                   = 9010,
+        [ServerOnly]
+        HouseRentTimestamp                      = 9011,
     }
 
     public static class PropertyIntExtensions
@@ -675,6 +676,8 @@ namespace ACE.Entity.Enum.Properties
                     return System.Enum.GetName(typeof(ParentLocation), value);
                 case PropertyInt.PlacementPosition:
                     return System.Enum.GetName(typeof(Placement), value);
+                case PropertyInt.HouseStatus:
+                    return System.Enum.GetName(typeof(HouseStatus), value);
             }
 
             return null;
