@@ -1,5 +1,18 @@
 # ACEmulator Change Log
 
+### 2019-03-10
+[Ripley]
+* Changed the way Name property is handled with regards to + (Admin/Sentinel characters).
+* Set up basic path to support replicating accesslevel changes on to existing characters.
+* Return @rename to functionality.
+* Add @pk command.
+* Revise @cloak command.
+
+### 2019-03-09
+[OptimShi]
+* Added LanguageInfo to DatLoader (0x41 in client_local_English.dat)
+* Added improved feedback when issuing invalid console commands or using incorrect syntax
+
 ### 2019-03-08
 [Ripley]
 * Exclude GamePiece from saving to Shard DB.
