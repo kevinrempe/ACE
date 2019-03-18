@@ -78,6 +78,8 @@ namespace ACE.Server.WorldObjects
         public WorldObject ProjectileSource;
         public WorldObject ProjectileTarget;
 
+        public WorldObject Wielder;
+
         public WorldObject() { }
 
         /// <summary>
@@ -710,18 +712,6 @@ namespace ACE.Server.WorldObjects
             return adjusted;
         }
 
-        // TODO: This isn't overriden by any child object. Should we be using the virtual functions in Container instead?
-        public virtual void Open(WorldObject opener)
-        {
-            // empty base, override in child objects
-        }
-
-        // TODO: This isn't overriden by any child object. Should we be using the virtual functions in Container instead?
-        public virtual void Close(WorldObject closer)
-        {
-            // empty base, override in child objects
-        }
-
         /// <summary>
         /// Returns a strike message based on damage type and severity
         /// </summary>
@@ -886,7 +876,7 @@ namespace ACE.Server.WorldObjects
 
         public string GetPluralName()
         {
-            return Name + "s";
+            return GetProperty(PropertyString.PluralName) ?? Name + "s";
         }
 
         /// <summary>
@@ -955,6 +945,8 @@ namespace ACE.Server.WorldObjects
         public static readonly float LocalBroadcastRange = 96.0f;
 
         public SetPosition ScatterPos;
+
+        public DestinationType DestinationType;
 
         public Skill ConvertToMoASkill(Skill skill)
         {
