@@ -483,6 +483,10 @@ namespace ACE.Server.WorldObjects
                             foreach (var fellow in fellows)
                                 CreatePlayerSpell(fellow, spell);
                         }
+
+                        // handle self procs
+                        TryProcEquippedItems(this, true);
+
                         break;
 
                     case CastingPreCheckStatus.InvalidPKStatus:
@@ -580,7 +584,13 @@ namespace ACE.Server.WorldObjects
                         player.Session.Network.EnqueueSend(enchantmentStatus.Message);
 
                     if (spell.IsHarmful)
+                    {
                         Proficiency.OnSuccessUse(player, player.GetCreatureSkill(Skill.CreatureEnchantment), (target as Creature).GetCreatureSkill(Skill.MagicDefense).Current);
+
+                        // handle target procs
+                        if (creatureTarget != null && creatureTarget != this)
+                            TryProcEquippedItems(creatureTarget, false);
+                    }
                     else
                         Proficiency.OnSuccessUse(player, player.GetCreatureSkill(Skill.CreatureEnchantment), spell.PowerMod);
 
@@ -612,7 +622,13 @@ namespace ACE.Server.WorldObjects
                     if (spell.MetaSpellType != SpellType.LifeProjectile)
                     {
                         if (spell.IsHarmful)
+                        {
                             Proficiency.OnSuccessUse(player, player.GetCreatureSkill(Skill.LifeMagic), (target as Creature).GetCreatureSkill(Skill.MagicDefense).Current);
+
+                            // handle target procs
+                            if (creatureTarget != null && creatureTarget != this)
+                                TryProcEquippedItems(creatureTarget, false);
+                        }
                         else
                             Proficiency.OnSuccessUse(player, player.GetCreatureSkill(Skill.LifeMagic), spell.PowerMod);
                     }
@@ -803,6 +819,10 @@ namespace ACE.Server.WorldObjects
                                 Session.Network.EnqueueSend(new GameMessageSystemChat("Untargeted SpellID " + spellId + " not yet implemented!", ChatMessageType.System));
                                 break;
                         }
+
+                        // handle self procs
+                        TryProcEquippedItems(this, true);
+
                         break;
                     default:
                         useDone = WeenieError.YourSpellFizzled;
@@ -1059,11 +1079,7 @@ namespace ACE.Server.WorldObjects
                     continue;
                 }
 
-                item.SetStackSize(item.StackSize - 1);
-                if (item.StackSize > 0)
-                    Session.Network.EnqueueSend(new GameMessageSetStackSize(item));
-                else
-                    TryConsumeFromInventoryWithNetworking(item);
+                TryConsumeFromInventoryWithNetworking(item, 1);
             }
 
             // send message to player
