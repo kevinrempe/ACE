@@ -47,6 +47,14 @@ namespace ACE.Server.WorldObjects
                 return;
             }
 
+            // fix bug in magic combat mode after walking to target,
+            // crouch animation steps out of range
+            if (useRadius == null)
+                useRadius = target.UseRadius ?? 0.6f;
+
+            if (CombatMode == CombatMode.Magic)
+                useRadius = Math.Max(0.0f, useRadius.Value - 0.2f);
+
             // already within use distance?
             var withinUseRadius = CurrentLandblock.WithinUseRadius(this, target.Guid, out var targetValid, useRadius);
             if (withinUseRadius)
@@ -67,7 +75,7 @@ namespace ACE.Server.WorldObjects
             if (target.WeenieType == WeenieType.Portal)
                 MoveToPosition(target.Location);
             else
-                MoveToObject(target);
+                MoveToObject(target, useRadius);
 
             moveToChainStartTime = DateTime.UtcNow;
 
@@ -247,7 +255,7 @@ namespace ACE.Server.WorldObjects
 
         public void TakeDamage_Falling(float amount)
         {
-            if (Invincible ?? false) return;
+            if (IsDead || Invincible) return;
 
             // handle lifestone protection?
             if (UnderLifestoneProtection)
@@ -266,9 +274,9 @@ namespace ACE.Server.WorldObjects
 
             var msg = Strings.GetFallMessage(damageTaken, Health.MaxValue);
 
-            Session.Network.EnqueueSend(new GameMessageSystemChat(msg, ChatMessageType.Combat));
+            SendMessage(msg, ChatMessageType.Combat);
 
-            if (Health.Current == 0)
+            if (Health.Current <= 0)
             {
                 OnDeath(this, DamageType.Bludgeon, false);
                 Die();

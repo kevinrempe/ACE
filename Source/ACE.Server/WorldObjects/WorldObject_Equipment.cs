@@ -95,7 +95,7 @@ namespace ACE.Server.WorldObjects
                 var hasVariance = item.StackSizeVariance > 0;
                 if (hasVariance)
                 {
-                    var minStack = (int)Math.Round(item.StackSize * item.StackSizeVariance);
+                    var minStack = (int)Math.Max(Math.Round(item.StackSize * item.StackSizeVariance), 1);
                     var maxStack = item.StackSize;
                     stackSize = ThreadSafeRandom.Next(minStack, maxStack);
                 }
@@ -103,6 +103,16 @@ namespace ACE.Server.WorldObjects
             }
 
             return wo;
+        }
+
+        public virtual void OnWield(Creature creature)
+        {
+            EmoteManager.OnWield(creature);
+        }
+
+        public virtual void OnUnWield(Creature creature)
+        {
+            EmoteManager.OnUnwield(creature);
         }
     }
 }

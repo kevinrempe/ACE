@@ -1,3 +1,5 @@
+using System.Numerics;
+
 using ACE.Database.Models.Shard;
 using ACE.Database.Models.World;
 using ACE.Entity;
@@ -36,17 +38,21 @@ namespace ACE.Server.WorldObjects
             // unanimated objects will float in the air, and not be affected by gravity
             // unless we give it a bit of velocity to start
             // fixes floating storage chests
-            Velocity = new AceVector3(0.0f, 0.0f, 0.5f);
+            Velocity = new Vector3(0, 0, 0.5f);
         }
 
         public override ActivationResult CheckUseRequirements(WorldObject activator)
         {
+            var baseRequirements = base.CheckUseRequirements(activator);
+            if (!baseRequirements.Success)
+                return baseRequirements;
+
             if (!(activator is Player player))
                 return new ActivationResult(false);
 
             if (!House.RootHouse.HasPermission(player, true))
             {
-                player.Session.Network.EnqueueSend(new GameEventCommunicationTransientString(player.Session, $"The {Name} is locked!"));
+                player.Session.Network.EnqueueSend(new GameEventCommunicationTransientString(player.Session, $"You do not have permission to access {Name}"));
                 EnqueueBroadcast(new GameMessageSound(Guid, Sound.OpenFailDueToLock, 1.0f));
                 return new ActivationResult(false);
             }

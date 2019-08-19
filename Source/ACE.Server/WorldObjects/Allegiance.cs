@@ -33,20 +33,23 @@ namespace ACE.Server.WorldObjects
 
         public Dictionary<ObjectGuid, AllegianceNode> Officers;
 
+        public List<BiotaPropertiesAllegiance> BiotaPropertiesAllegiance => Biota.GetAllegiance(BiotaDatabaseLock);
+
         /// <summary>
         /// Approved vassals for adding to locked allegiances
         /// </summary>
-        public HashSet<ObjectGuid> ApprovedVassals;
+        public List<BiotaPropertiesAllegiance> ApprovedVassals => BiotaPropertiesAllegiance.Where(i => i.ApprovedVassal).ToList();
 
         /// <summary>
         /// Handles booting players from allegiance chat
         /// </summary>
-        public Dictionary<ObjectGuid, DateTime> ChatFilters;
+        public Dictionary<ObjectGuid, DateTime> ChatFilters { get; set; }
 
         /// <summary>
         /// A list of players who are banned from joining.
         /// </summary>
-        public HashSet<ObjectGuid> BanList;
+        //public HashSet<ObjectGuid> BanList { get; set; }
+        public List<BiotaPropertiesAllegiance> BanList => BiotaPropertiesAllegiance.Where(i => i.Banned).ToList();
 
         /// <summary>
         /// Returns the list of allegiance members who are currently online
@@ -114,10 +117,6 @@ namespace ACE.Server.WorldObjects
             //Console.WriteLine("TotalMembers: " + TotalMembers);
             BuildOfficers();
 
-            ApprovedVassals = new HashSet<ObjectGuid>();
-
-            BanList = new HashSet<ObjectGuid>();
-
             ChatFilters = new Dictionary<ObjectGuid, DateTime>();
         }
 
@@ -131,7 +130,7 @@ namespace ACE.Server.WorldObjects
 
             Members.Add(node.PlayerGuid, node);
 
-            foreach (var vassal in node.Vassals)
+            foreach (var vassal in node.Vassals.Values)
                 BuildMembers(vassal);
         }
 
@@ -229,11 +228,11 @@ namespace ACE.Server.WorldObjects
             switch (officerRank)
             {
                 case AllegianceOfficerLevel.Speaker:
-                    return AllegianceSpeakerTitle ?? "Speaker";
+                    return string.IsNullOrEmpty(AllegianceSpeakerTitle) ? "Speaker" : AllegianceSpeakerTitle;
                 case AllegianceOfficerLevel.Seneschal:
-                    return AllegianceSeneschalTitle ?? "Seneschal";
+                    return string.IsNullOrEmpty(AllegianceSeneschalTitle) ? "Seneschal" : AllegianceSeneschalTitle;
                 case AllegianceOfficerLevel.Castellan:
-                    return AllegianceCastellanTitle ?? "Castellan";
+                    return string.IsNullOrEmpty(AllegianceCastellanTitle) ? "Castellan" : AllegianceCastellanTitle;
                 default:
                     return "";
             }
@@ -290,6 +289,10 @@ namespace ACE.Server.WorldObjects
                 var player = PlayerManager.FindByGuid(member.Key);
                 var onlinePlayer = PlayerManager.GetOnlinePlayer(member.Key);
 
+                if (player == null) continue;
+
+                var updated = false;
+
                 // if changed, update monarch id
                 if ((player.MonarchId ?? 0) != member.Value.Allegiance.MonarchId)
                 {
@@ -297,6 +300,8 @@ namespace ACE.Server.WorldObjects
 
                     if (onlinePlayer != null)
                         onlinePlayer.Session.Network.EnqueueSend(new GameMessagePrivateUpdateInstanceID(onlinePlayer, PropertyInstanceId.Monarch, player.MonarchId.Value));
+
+                    updated = true;
                 }
 
                 // if changed, update rank
@@ -306,11 +311,118 @@ namespace ACE.Server.WorldObjects
 
                     if (onlinePlayer != null)
                         onlinePlayer.Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt(onlinePlayer, PropertyInt.AllegianceRank, player.AllegianceRank.Value));
+
+                    updated = true;
                 }
+
+                if (updated)
+                    player.SaveBiotaToDatabase();
 
                 if (onlinePlayer != null)
                     onlinePlayer.Session.Network.EnqueueSend(new GameEventAllegianceUpdate(onlinePlayer.Session, this, member.Value), new GameEventAllegianceAllegianceUpdateDone(onlinePlayer.Session));
             }
+        }
+
+        public void ShowMembers()
+        {
+            Console.WriteLine($"Total members: {Members.Count}");
+
+            foreach (var member in Members)
+            {
+                var player = PlayerManager.FindByGuid(member.Key, out bool isOnline);
+                var prefix = isOnline ? "* " : "";
+
+                Console.WriteLine($"{prefix}{player.Name}");
+            }
+        }
+
+        public void ShowInfo()
+        {
+            Monarch.ShowInfo();
+        }
+
+        public void AddBan(uint playerGuid)
+        {
+            var entity = BiotaPropertiesAllegiance.FirstOrDefault(i => i.CharacterId == playerGuid);
+
+            if (entity == null)
+                Biota.AddOrUpdateAllegiance(playerGuid, true, false, BiotaDatabaseLock);
+            else
+                Biota.AddOrUpdateAllegiance(playerGuid, true, entity.ApprovedVassal, BiotaDatabaseLock);
+
+            // ChangesDetected = true doesn't work here,
+            // since the Allegiance WO is not associated with a landblock
+
+            SaveBiotaToDatabase();
+        }
+
+        public bool RemoveBan(uint playerGuid)
+        {
+            var entity = BiotaPropertiesAllegiance.FirstOrDefault(i => i.CharacterId == playerGuid);
+
+            if (entity == null)
+                return false;
+
+            if (entity.ApprovedVassal)
+            {
+                Biota.AddOrUpdateAllegiance(playerGuid, false, true, BiotaDatabaseLock);
+                SaveBiotaToDatabase();
+                return true;
+            }
+
+            var removed = Biota.TryRemoveAllegiance(playerGuid, out _, BiotaDatabaseLock);
+
+            if (removed)
+                SaveBiotaToDatabase();
+
+            return removed;
+        }
+
+        public bool IsBanned(uint playerGuid)
+        {
+            return BanList.Any(i => i.CharacterId == playerGuid);
+        }
+
+        public void AddApprovedVassal(uint playerGuid)
+        {
+            var entity = BiotaPropertiesAllegiance.FirstOrDefault(i => i.CharacterId == playerGuid);
+
+            if (entity == null)
+                Biota.AddOrUpdateAllegiance(playerGuid, false, true, BiotaDatabaseLock);
+            else
+                Biota.AddOrUpdateAllegiance(playerGuid, entity.Banned, true, BiotaDatabaseLock);
+
+            // ChangesDetected = true doesn't work here,
+            // since the Allegiance WO is not associated with a landblock
+
+            SaveBiotaToDatabase();
+        }
+
+        public bool RemoveApprovedVassal(uint playerGuid)
+        {
+            var entity = BiotaPropertiesAllegiance.FirstOrDefault(i => i.CharacterId == playerGuid);
+
+            if (entity == null)
+                return false;
+
+            if (entity.Banned)
+            {
+                Biota.AddOrUpdateAllegiance(playerGuid, true, false, BiotaDatabaseLock);
+                SaveBiotaToDatabase();
+                return true;
+            }
+
+            var removed = Biota.TryRemoveAllegiance(playerGuid, out _, BiotaDatabaseLock);
+
+            if (removed)
+                SaveBiotaToDatabase();
+
+            return removed;
+        }
+
+        public bool HasApprovedVassal(uint playerGuid)
+        {
+            return ApprovedVassals.Any(i => i.CharacterId == playerGuid);
         }
     }
 }

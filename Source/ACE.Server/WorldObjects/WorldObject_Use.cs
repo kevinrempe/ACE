@@ -60,8 +60,8 @@ namespace ACE.Server.WorldObjects
         {
             //Console.WriteLine($"{Name}.OnActivate({activator.Name})");
 
-            // when players double click an object in the 3d world,
-            // and the packet comes in as GameAction 0x35 - UseWithTarget
+            // when players double click an object,
+            // and the packet comes in as GameAction 0x36 - UseItem
             // from the game perspective, technically this starts as an 'Activate',
             // which can have a list of possible ActivationResponses - 
             // Use (by far the most common), Animate, Talk, Emote, CastSpell, Generate
@@ -72,9 +72,10 @@ namespace ACE.Server.WorldObjects
             // verify use requirements
             var result = CheckUseRequirements(activator);
 
+            var player = activator as Player;
             if (!result.Success)
             {
-                if (result.Message != null && activator is Player player)
+                if (result.Message != null && player != null)
                     player.Session.Network.EnqueueSend(result.Message);
 
                 return;
@@ -92,20 +93,15 @@ namespace ACE.Server.WorldObjects
                 return;
             }
 
+            if (player != null)
+                player.EnchantmentManager.StartCooldown(this);
+
             // if ActivationTarget is another object,
             // should this be checking the ActivationResponse of the target object?
-
-            // default use action
-            if (ActivationResponse.HasFlag(ActivationResponse.Use))
-                target.ActOnUse(activator);
 
             // perform motion animation - rarely used (only 4 instances in PY16 db)
             if (ActivationResponse.HasFlag(ActivationResponse.Animate))
                 target.OnAnimate(activator);
-
-            // send chat text - rarely used (only 8 instances in PY16 db)
-            if (ActivationResponse.HasFlag(ActivationResponse.Talk))
-                target.OnTalk(activator);
 
             // perform activation emote
             if (ActivationResponse.HasFlag(ActivationResponse.Emote))
@@ -118,6 +114,22 @@ namespace ACE.Server.WorldObjects
             // call to generator to spawn new object
             if (ActivationResponse.HasFlag(ActivationResponse.Generate))
                 target.OnGenerate(activator);
+
+            // default use action
+            if (ActivationResponse.HasFlag(ActivationResponse.Use))
+            {
+                if (activator is Creature creature)
+                {
+                    //target.EmoteManager.OnActivation(creature); // found a few things with Activation on them but not ActivationResponse.Emote...
+                    target.EmoteManager.OnUse(creature);
+                }
+
+                target.ActOnUse(activator);
+            }
+
+            // send chat text - rarely used (only 8 instances in PY16 db)
+            if (ActivationResponse.HasFlag(ActivationResponse.Talk))
+                target.OnTalk(activator);
         }
 
         public virtual void ActOnUse(WorldObject activator)
@@ -155,14 +167,14 @@ namespace ACE.Server.WorldObjects
             if (SpellDID != null)
             {
                 var spell = new Spell(SpellDID.Value);
-                TryCastSpell(spell, activator);
+                TryCastSpell(spell, activator, this);
             }
         }
 
         public virtual void OnGenerate(WorldObject activator)
         {
             if (IsGenerator)
-                Generator_HeartBeat();
+                Generator_Regeneration();
         }
 
         /// <summary>
@@ -172,10 +184,8 @@ namespace ACE.Server.WorldObjects
         {
             //Console.WriteLine($"{Name}.CheckUseRequirements({activator.Name})");
 
-            if (!(activator is Player))
-                return new ActivationResult(false);
-
-            var player = activator as Player;
+            if (!(activator is Player player))
+                return new ActivationResult(true);
 
             // verify arcane lore requirement
             if (ItemDifficulty != null)
@@ -202,7 +212,11 @@ namespace ACE.Server.WorldObjects
                 var playerSkill = player.GetCreatureSkill(skill);
 
                 if (playerSkill.AdvancementClass < SkillAdvancementClass.Trained)
-                    return new ActivationResult(new GameEventWeenieErrorWithString(player.Session, WeenieErrorWithString.Your_SkillMustBeTrained, playerSkill.Skill.ToSentence()));
+                {
+                    //return new ActivationResult(new GameEventWeenieErrorWithString(player.Session, WeenieErrorWithString.Your_SkillMustBeTrained, playerSkill.Skill.ToSentence()));
+                    player.Session.Network.EnqueueSend(new GameEventCommunicationTransientString(player.Session, $"You must have {playerSkill.Skill.ToSentence()} trained to use that item's magic"));
+                    return new ActivationResult(false);
+                }
 
                 // verify skill level
                 if (UseRequiresSkillLevel != null)
@@ -237,6 +251,19 @@ namespace ACE.Server.WorldObjects
                 var playerLevel = player.Level ?? 1;
                 if (playerLevel < UseRequiresLevel.Value)
                     return new ActivationResult(new GameEventWeenieErrorWithString(player.Session, WeenieErrorWithString.YouMustBe_ToUseItemMagic, $"level {UseRequiresLevel.Value}"));
+            }
+
+            // Check for a cooldown
+            if (!player.EnchantmentManager.CheckCooldown(CooldownId))
+            {
+                // TODO: werror/string not found, find exact message
+
+                /*var cooldown = player.GetCooldown(this);
+                var timer = cooldown.GetFriendlyString();
+                player.Session.Network.EnqueueSend(new GameMessageSystemChat($"{Name} can be activated again in {timer}", ChatMessageType.Broadcast));*/
+
+                player.Session.Network.EnqueueSend(new GameEventCommunicationTransientString(player.Session, "You have used this item too recently"));
+                return new ActivationResult(false);
             }
 
             return new ActivationResult(true);

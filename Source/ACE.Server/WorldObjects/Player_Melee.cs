@@ -5,6 +5,7 @@ using ACE.Entity.Enum;
 using ACE.Server.Entity;
 using ACE.Server.Entity.Actions;
 using ACE.Server.Network.GameEvent.Events;
+using ACE.Server.Network.GameMessages.Messages;
 using ACE.Server.Physics.Animation;
 
 namespace ACE.Server.WorldObjects
@@ -45,49 +46,45 @@ namespace ACE.Server.WorldObjects
         /// </summary>
         public void HandleActionTargetedMeleeAttack(uint targetGuid, uint attackHeight, float powerLevel)
         {
-            /*Console.WriteLine("HandleActionTargetedMeleeAttack");
-            Console.WriteLine("Target ID: " + guid.Full.ToString("X8"));
-            Console.WriteLine("Attack height: " + attackHeight);
-            Console.WriteLine("Power level: " + powerLevel);*/
-
-            // sanity check
+            // verify input
             powerLevel = Math.Clamp(powerLevel, 0.0f, 1.0f);
 
             AttackHeight = (AttackHeight)attackHeight;
             PowerLevel = powerLevel;
 
-            // get world object of target guid
+            // already in melee loop?
+            if (MeleeTarget != null)
+                return;
+
+            // get world object for target creature
             var target = CurrentLandblock?.GetObject(targetGuid);
+
             if (target == null)
             {
-                log.Warn($"Unknown target guid {targetGuid:X8}");
+                log.Warn($"{Name}.HandleActionTargetdMeleeAttack({targetGuid:X8}, {AttackHeight}, {powerLevel}) - couldn't find target guid");
                 return;
             }
+
             var creatureTarget = target as Creature;
             if (creatureTarget == null)
             {
-                log.Warn($"Target GUID not creature {targetGuid:X8}");
+                log.Warn($"{Name}.HandleActionTargetdMeleeAttack({targetGuid:X8}, {AttackHeight}, {powerLevel}) - target guid not creature");
                 return;
             }
 
-            if (MeleeTarget == null)
+            // perform verifications
+            if (IsBusy || Teleporting)
             {
-                MeleeTarget = target;
-                AttackTarget = MeleeTarget;
-            }
-            else
+                Session.Network.EnqueueSend(new GameEventWeenieError(Session, WeenieError.YoureTooBusy));
                 return;
+            }
 
-            // get distance from target
-            var dist = GetDistance(target);
+            if (target.Teleporting)
+                return;     // werror?
 
-            // get angle to target
-            var angle = GetAngle(target);
+            MeleeTarget = target;
+            AttackTarget = MeleeTarget;
 
-            //Console.WriteLine("Dist: " + dist);
-            //Console.WriteLine("Angle: " + angle);
-
-            // turn / moveto if required
             if (IsStickyDistance(target) && IsDirectVisible(target))
             {
                 // sticky melee
@@ -99,6 +96,7 @@ namespace ACE.Server.WorldObjects
             }
             else
             {
+                // turn / move to required
                 if (GetCharacterOption(CharacterOption.UseChargeAttack))
                 {
                     // charge attack
@@ -106,7 +104,7 @@ namespace ACE.Server.WorldObjects
                 }
                 else
                 {
-                    // move to
+                    
                     CreateMoveToChain(target, (success) =>
                     {
                         if (success)
@@ -179,6 +177,8 @@ namespace ACE.Server.WorldObjects
 
                 actionChain.AddAction(this, () =>
                 {
+                    if (IsDead) return;
+
                     var damageEvent = DamageTarget(creature, weapon);
 
                     // handle target procs
@@ -261,77 +261,37 @@ namespace ACE.Server.WorldObjects
             return animLength;
         }
 
+        private static readonly float KickThreshold = 0.75f;
+
+        public AttackType AttackType { get; set; }
+
         /// <summary>
-        /// Returns the melee swing animation, based on current stance and weapon
+        /// Returns the melee swing animation - based on weapon,
+        /// current stance, power bar, and attack height
         /// </summary>
         public override MotionCommand GetSwingAnimation()
         {
-            MotionCommand motion = new MotionCommand();
+            if (IsDualWieldAttack)
+                DualWieldAlternate = !DualWieldAlternate;
 
-            switch (CurrentMotionState.Stance)
+            var offhand = IsDualWieldAttack && !DualWieldAlternate;
+
+            var weapon = GetEquippedMeleeWeapon();
+
+            if (weapon != null)
             {
-                case MotionStance.SwordCombat:
-                case MotionStance.SwordShieldCombat:
-                case MotionStance.TwoHandedSwordCombat:
-                case MotionStance.TwoHandedStaffCombat:
-                case MotionStance.DualWieldCombat:
-                    {
-                        // handle dual wielding weapon alternating
-                        if (IsDualWieldAttack) DualWieldAlternate = !DualWieldAlternate;
-
-                        var weapon = GetEquippedMeleeWeapon();
-                        var attackType = GetWeaponAttackType(weapon);
-
-                        var action = PowerLevel < 0.33f && attackType.HasFlag(AttackType.Thrust) ? "Thrust" : "Slash";
-
-                        // handle multistrike weapons
-                        action = MultiStrike(attackType, action);
-
-                        if (IsDualWieldAttack && !DualWieldAlternate)
-                            action = "Offhand" + action;
-
-                        // this is very strange:
-                        // sword + no shield has slash, but not thrust
-                        // sword + shield has thrust, but not slash...
-                        if (CurrentMotionState.Stance == MotionStance.SwordCombat)
-                        {
-                            if (action.Contains("Double") || action.Contains("Triple"))
-                                action = action.Replace("Thrust", "Slash");
-                        }
-                        else if (CurrentMotionState.Stance == MotionStance.SwordShieldCombat)
-                        {
-                            if (action.Contains("Double") || action.Contains("Triple"))
-                                action = action.Replace("Slash", "Thrust");
-                        }
-
-                        Enum.TryParse(action + GetAttackHeight(), out motion);
-                        return motion;
-                    }
-                case MotionStance.HandCombat:
-                default:
-                    {
-                        // is the player holding a weapon?
-                        var weapon = GetEquippedMeleeWeapon();
-
-                        // no weapon: power range 1-3
-                        // unarmed weapon: power range 1-2
-                        if (weapon == null)
-                            Enum.TryParse("Attack" + GetAttackHeight() + (int)GetPowerRange(), out motion);
-                        else
-                            Enum.TryParse("Attack" + GetAttackHeight() + Math.Min((int)GetPowerRange(), 2), out motion);
-
-                        return motion;
-                    }
+                AttackType = weapon.GetAttackType(CurrentMotionState.Stance, PowerLevel, offhand);
             }
-        }
+            else
+            {
+                AttackType = PowerLevel > KickThreshold ? AttackType.Kick : AttackType.Punch;
+            }
 
-        public bool IsMeleeDistance(WorldObject target)
-        {
-            // always use spheres?
-            var cylDist = (float)Physics.Common.Position.CylinderDistance(PhysicsObj.GetRadius(), PhysicsObj.GetHeight(), PhysicsObj.Position,
-                target.PhysicsObj.GetRadius(), target.PhysicsObj.GetHeight(), target.PhysicsObj.Position);
+            var motion = CombatTable.GetMotion(CurrentMotionState.Stance, AttackHeight.Value, AttackType);
 
-            return cylDist <= 0.6f;
+            //Console.WriteLine($"{motion}");
+
+            return motion;
         }
 
         public bool IsStickyDistance(WorldObject target)

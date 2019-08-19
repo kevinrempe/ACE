@@ -13,6 +13,7 @@ using ACE.Entity;
 using ACE.Entity.Enum;
 using ACE.Entity.Enum.Properties;
 using ACE.Server.WorldObjects;
+using ACE.Server.Managers;
 
 namespace ACE.Server.Factories
 {
@@ -29,11 +30,16 @@ namespace ACE.Server.Factories
             FailedToSpecializeSkill,
         }
 
-        public static CreateResult Create(CharacterCreateInfo characterCreateInfo, Weenie weenie, ObjectGuid guid, uint accountId, out Player player)
+        public static CreateResult Create(CharacterCreateInfo characterCreateInfo, Weenie weenie, ObjectGuid guid, uint accountId, WeenieType weenieType, out Player player)
         {
             var heritageGroup = DatManager.PortalDat.CharGen.HeritageGroups[characterCreateInfo.Heritage];
 
-            player = new Player(weenie, guid, accountId);
+            if (weenieType == WeenieType.Admin)
+                player = new Admin(weenie, guid, accountId);
+            else if (weenieType == WeenieType.Sentinel)
+                player = new Sentinel(weenie, guid, accountId);
+            else
+                player = new Player(weenie, guid, accountId);
 
             player.SetProperty(PropertyInt.HeritageGroup, (int)characterCreateInfo.Heritage);
             player.SetProperty(PropertyString.HeritageGroup, heritageGroup.Name);
@@ -59,6 +65,11 @@ namespace ACE.Server.Factories
             // Get the hair first, because we need to know if you're bald, and that's the name of that tune!
             var hairstyle = sex.HairStyleList[Convert.ToInt32(characterCreateInfo.Apperance.HairStyle)];
 
+            // Olthoi and Gear Knights have a "Body Style" instead of a hair style. These styles have multiple model/texture changes, instead of a single head/hairstyle.
+            // Storing this value allows us to send the proper appearance ObjDesc
+            if (hairstyle.ObjDesc.AnimPartChanges.Count > 1)
+                player.SetProperty(PropertyInt.Hairstyle, (int)characterCreateInfo.Apperance.HairStyle);
+
             // Certain races (Undead, Tumeroks, Others?) have multiple body styles available. This is controlled via the "hair style".
             if (hairstyle.AlternateSetup > 0)
                 player.SetProperty(PropertyDataId.Setup, hairstyle.AlternateSetup);
@@ -71,7 +82,10 @@ namespace ACE.Server.Factories
             player.SetProperty(PropertyDataId.DefaultMouthTexture, sex.GetDefaultMouthTexture(characterCreateInfo.Apperance.Mouth));
             player.Character.HairTexture = sex.GetHairTexture(characterCreateInfo.Apperance.HairStyle);
             player.Character.DefaultHairTexture = sex.GetDefaultHairTexture(characterCreateInfo.Apperance.HairStyle);
-            player.SetProperty(PropertyDataId.HeadObject, sex.GetHeadObject(characterCreateInfo.Apperance.HairStyle));
+            // HeadObject can be null if we're dealing with GearKnight or Olthoi
+            var headObject = sex.GetHeadObject(characterCreateInfo.Apperance.HairStyle);
+            if (headObject != null)
+                player.SetProperty(PropertyDataId.HeadObject, (uint)headObject);
 
             // Skin is stored as PaletteSet (list of Palettes), so we need to read in the set to get the specific palette
             var skinPalSet = DatManager.PortalDat.ReadFromDat<PaletteSet>(sex.SkinPalSet);
@@ -91,26 +105,26 @@ namespace ACE.Server.Factories
                 if (hat != null)
                     player.TryEquipObject(hat, hat.ValidLocations ?? 0);
                 else
-                    CreateIOU(player, sex.GetHeadgearWeenie(characterCreateInfo.Apperance.HeadgearStyle));
+                    player.TryAddToInventory(CreateIOU(sex.GetHeadgearWeenie(characterCreateInfo.Apperance.HeadgearStyle)));
             }
 
             var shirt = GetClothingObject(sex.GetShirtWeenie(characterCreateInfo.Apperance.ShirtStyle), characterCreateInfo.Apperance.ShirtColor, characterCreateInfo.Apperance.ShirtHue);
             if (shirt != null)
                 player.TryEquipObject(shirt, shirt.ValidLocations ?? 0);
             else
-                CreateIOU(player, sex.GetShirtWeenie(characterCreateInfo.Apperance.ShirtStyle));
+                player.TryAddToInventory(CreateIOU(sex.GetShirtWeenie(characterCreateInfo.Apperance.ShirtStyle)));
 
             var pants = GetClothingObject(sex.GetPantsWeenie(characterCreateInfo.Apperance.PantsStyle), characterCreateInfo.Apperance.PantsColor, characterCreateInfo.Apperance.PantsHue);
             if (pants != null)
                 player.TryEquipObject(pants, pants.ValidLocations ?? 0);
             else
-                CreateIOU(player, sex.GetPantsWeenie(characterCreateInfo.Apperance.PantsStyle));
+                player.TryAddToInventory(CreateIOU(sex.GetPantsWeenie(characterCreateInfo.Apperance.PantsStyle)));
 
             var shoes = GetClothingObject(sex.GetFootwearWeenie(characterCreateInfo.Apperance.FootwearStyle), characterCreateInfo.Apperance.FootwearColor, characterCreateInfo.Apperance.FootwearHue);
             if (shoes != null)
                 player.TryEquipObject(shoes, shoes.ValidLocations ?? 0);
             else
-                CreateIOU(player, sex.GetFootwearWeenie(characterCreateInfo.Apperance.FootwearStyle));
+                player.TryAddToInventory(CreateIOU(sex.GetFootwearWeenie(characterCreateInfo.Apperance.FootwearStyle)));
 
             string templateName = heritageGroup.Templates[characterCreateInfo.TemplateOption].Name;
             //player.SetProperty(PropertyString.Title, templateName);
@@ -195,8 +209,19 @@ namespace ACE.Server.Factories
                         return CreateResult.FailedToTrainSkill;
                 }
                 else if (sac == SkillAdvancementClass.Untrained)
-                    player.UntrainSkill((Skill) i, 0);
+                    player.UntrainSkill((Skill)i, 0);
             }
+
+            var isDualWieldTrainedOrSpecialized = player.Skills[Skill.DualWield].AdvancementClass > SkillAdvancementClass.Untrained;
+
+            // Set Heritage based Melee and Ranged Masteries
+            GetMasteries(player.HeritageGroup, out WeaponType meleeMastery, out WeaponType rangedMastery);
+
+            player.SetProperty(PropertyInt.MeleeMastery, (int)meleeMastery);
+            player.SetProperty(PropertyInt.RangedMastery, (int)rangedMastery);
+
+            // Set innate augs
+            SetInnateAugmentations(player);
 
             // grant starter items based on skills
             var starterGearConfig = StarterGearFactory.GetStarterGearConfiguration();
@@ -227,12 +252,27 @@ namespace ACE.Server.Factories
                         }
                         else
                         {
-                            CreateIOU(player, item.WeenieId);
-                            continue;
+                            player.TryAddToInventory(CreateIOU(item.WeenieId));
                         }
 
-                        if (player.TryAddToInventory(loot))
+                        if (loot != null && player.TryAddToInventory(loot))
                             grantedWeenies.Add(item.WeenieId);
+
+                        if (isDualWieldTrainedOrSpecialized && loot != null)
+                        {
+                            if (loot.WeenieType == WeenieType.MeleeWeapon)
+                            {
+                                var dualloot = WorldObjectFactory.CreateNewWorldObject(item.WeenieId);
+                                if (dualloot != null)
+                                {
+                                    player.TryAddToInventory(dualloot);
+                                }
+                                else
+                                {
+                                    player.TryAddToInventory(CreateIOU(item.WeenieId));
+                                }
+                            }
+                        }
                     }
 
                     var heritageLoot = skillGear.Heritage.FirstOrDefault(sh => sh.HeritageId == characterCreateInfo.Heritage);
@@ -258,12 +298,27 @@ namespace ACE.Server.Factories
                             }
                             else
                             {
-                                CreateIOU(player, item.WeenieId);
-                                continue;
+                                player.TryAddToInventory(CreateIOU(item.WeenieId));
                             }
 
-                            if (player.TryAddToInventory(loot))
+                            if (loot != null && player.TryAddToInventory(loot))
                                 grantedWeenies.Add(item.WeenieId);
+
+                            if (isDualWieldTrainedOrSpecialized && loot != null)
+                            {
+                                if (loot.WeenieType == WeenieType.MeleeWeapon)
+                                {
+                                    var dualloot = WorldObjectFactory.CreateNewWorldObject(item.WeenieId);
+                                    if (dualloot != null)
+                                    {
+                                        player.TryAddToInventory(dualloot);
+                                    }
+                                    else
+                                    {
+                                        player.TryAddToInventory(CreateIOU(item.WeenieId));
+                                    }
+                                }
+                            }
                         }
                     }
 
@@ -298,13 +353,53 @@ namespace ACE.Server.Factories
                 starterArea.Locations[0].Frame.Origin.X, starterArea.Locations[0].Frame.Origin.Y, starterArea.Locations[0].Frame.Origin.Z,
                 starterArea.Locations[0].Frame.Orientation.X, starterArea.Locations[0].Frame.Orientation.Y, starterArea.Locations[0].Frame.Orientation.Z, starterArea.Locations[0].Frame.Orientation.W);
 
-            player.Instantiation = new Position(player.Location);
+            var instantiation = new Position(0xA9B40019, 84, 7.1f, 94, 0, 0, -0.0784591f, 0.996917f); // ultimate fallback.
+            var spellFreeRide = new Spell();
+            switch (starterArea.Name)
+            {
+                case "OlthoiLair": //todo: check this when olthoi play is allowed in ace
+                    spellFreeRide = null; // no training area for olthoi, so they start and fall back to same place.
+                    instantiation = new Position(player.Location);
+                    break;
+                case "Shoushi":
+                    spellFreeRide = DatabaseManager.World.GetCachedSpell(3813); // Free Ride to Shoushi
+                    break;
+                case "Yaraq":
+                    spellFreeRide = DatabaseManager.World.GetCachedSpell(3814); // Free Ride to Yaraq
+                    break;
+                case "Sanamar":
+                    spellFreeRide = DatabaseManager.World.GetCachedSpell(3535); // Free Ride to Sanamar
+                    break;
+                case "Holtburg":
+                default:
+                    spellFreeRide = DatabaseManager.World.GetCachedSpell(3815); // Free Ride to Holtburg
+                    break;
+            }
+            if (spellFreeRide != null && spellFreeRide.Name != "")
+                instantiation = new Position(spellFreeRide.PositionObjCellId.Value, spellFreeRide.PositionOriginX.Value, spellFreeRide.PositionOriginY.Value, spellFreeRide.PositionOriginZ.Value, spellFreeRide.PositionAnglesX.Value, spellFreeRide.PositionAnglesY.Value, spellFreeRide.PositionAnglesZ.Value, spellFreeRide.PositionAnglesW.Value);
+
+            player.Instantiation = new Position(instantiation);
+
             player.Sanctuary = new Position(player.Location);
+
+            player.SetProperty(PropertyBool.RecallsDisabled, true);
+
+            if (PropertyManager.GetBool("pk_server").Item)
+                player.SetProperty(PropertyInt.PlayerKillerStatus, (int)PlayerKillerStatus.PK);
+            else if (PropertyManager.GetBool("pkl_server").Item)
+                player.SetProperty(PropertyInt.PlayerKillerStatus, (int)PlayerKillerStatus.NPK);
+
+            if ((PropertyManager.GetBool("pk_server").Item || PropertyManager.GetBool("pkl_server").Item) && PropertyManager.GetBool("pk_server_safe_training_academy").Item)
+            {
+                player.SetProperty(PropertyFloat.MinimumTimeSincePk, -PropertyManager.GetDouble("pk_new_character_grace_period").Item);
+                player.SetProperty(PropertyInt.PlayerKillerStatus, (int)PlayerKillerStatus.NPK);
+            }
 
             if (player is Sentinel || player is Admin)
             {
                 player.Character.IsPlussed = true;
                 player.CloakStatus = CloakStatus.Off;
+                player.ChannelsAllowed = player.ChannelsActive;
             }
 
             CharacterCreateSetDefaultCharacterOptions(player);
@@ -379,14 +474,116 @@ namespace ACE.Server.Factories
             return worldObject;
         }
 
-        private static void CreateIOU(Player player, uint missingWeenieId)
+        /// <summary>
+        /// Set Heritage based Melee and Ranged Masteries
+        /// </summary>
+        /// <param name="heritageGroup"></param>
+        /// <param name="meleeMastery"></param>
+        /// <param name="rangedMastery"></param>
+        private static void GetMasteries(HeritageGroup heritageGroup, out WeaponType meleeMastery, out WeaponType rangedMastery)
         {
-            var book = (Book)WorldObjectFactory.CreateNewWorldObject("parchment");
+            switch (heritageGroup)
+            {
+                case HeritageGroup.Aluvian:
+                    meleeMastery = WeaponType.Dagger;
+                    rangedMastery = WeaponType.Bow;
+                    break;
+                case HeritageGroup.Gharundim:
+                    meleeMastery = WeaponType.Staff;
+                    rangedMastery = WeaponType.Magic;
+                    break;
+                case HeritageGroup.Sho:
+                    meleeMastery = WeaponType.Unarmed;
+                    rangedMastery = WeaponType.Bow;
+                    break;
+                case HeritageGroup.Viamontian:
+                    meleeMastery = WeaponType.Sword;
+                    rangedMastery = WeaponType.Crossbow;
+                    break;
+                case HeritageGroup.Penumbraen:
+                case HeritageGroup.Shadowbound:
+                    meleeMastery = WeaponType.Unarmed;
+                    rangedMastery = WeaponType.Crossbow;
+                    break;
+                case HeritageGroup.Gearknight:
+                    meleeMastery = WeaponType.Mace;
+                    rangedMastery = WeaponType.Crossbow;
+                    break;
+                case HeritageGroup.Tumerok:
+                    meleeMastery = WeaponType.Spear;
+                    rangedMastery = WeaponType.Thrown;
+                    break;
+                case HeritageGroup.Undead:
+                case HeritageGroup.Lugian:
+                    meleeMastery = WeaponType.Axe;
+                    rangedMastery = WeaponType.Thrown;
+                    break;
+                case HeritageGroup.Empyrean:
+                    meleeMastery = WeaponType.Sword;
+                    rangedMastery = WeaponType.Magic;
+                    break;
+                default:
+                    meleeMastery = WeaponType.Undef;
+                    rangedMastery = WeaponType.Undef;
+                    break;
+            }
+        }
 
-            book.SetProperties("IOU", "An IOU for a missing database object.", "Sorry about that chief...", "ACEmulator", "prewritten");
-            book.AddPage(player.Guid.Full, "ACEmulator", "prewritten", false, $"{missingWeenieId}\n\nSorry but the database does not have a weenie for weenieClassId #{missingWeenieId} so in lieu of that here is an IOU for that item.");
+        private static void SetInnateAugmentations(Player player)
+        {
+            switch (player.HeritageGroup)
+            {
+                case HeritageGroup.Aluvian:
+                case HeritageGroup.Gharundim:
+                case HeritageGroup.Sho:
+                case HeritageGroup.Viamontian:
+                    player.AugmentationJackOfAllTrades = 1;
+                    break;
 
-            player.TryAddToInventory(book);
+                case HeritageGroup.Shadowbound:
+                case HeritageGroup.Penumbraen:
+                    player.AugmentationCriticalExpertise = 1;
+                    break;
+
+                case HeritageGroup.Gearknight:
+                    player.AugmentationDamageReduction = 1;
+                    break;
+
+                case HeritageGroup.Undead:
+                    player.AugmentationCriticalDefense = 1;
+                    break;
+
+                case HeritageGroup.Empyrean:
+                    player.AugmentationInfusedLifeMagic = 1;
+                    break;
+
+                case HeritageGroup.Tumerok:
+                    player.AugmentationCriticalPower = 1;
+                    break;
+
+                case HeritageGroup.Lugian:
+                    player.AugmentationIncreasedCarryingCapacity = 1;
+                    break;
+
+                case HeritageGroup.Olthoi:
+                case HeritageGroup.OlthoiAcid:
+                    break;
+            }
+        }
+
+        public static WorldObject CreateIOU(uint missingWeenieId)
+        {
+            var iou = (Book)WorldObjectFactory.CreateNewWorldObject("parchment");
+
+            iou.SetProperties("IOU", "An IOU for a missing database object.", "Sorry about that chief...", "ACEmulator", "prewritten");
+            iou.AddPage(uint.MaxValue, "ACEmulator", "prewritten", false, $"{missingWeenieId}\n\nSorry but the database does not have a weenie for weenieClassId #{missingWeenieId} so in lieu of that here is an IOU for that item.");
+            iou.Bonded = (int)BondedStatus.Bonded;
+            iou.Attuned = (int)AttunedStatus.Attuned;
+            iou.IsSellable = false;
+            iou.Value = 0;
+            iou.EncumbranceVal = 0;
+
+            return iou;
         }
 
         /// <summary>
@@ -395,6 +592,8 @@ namespace ACE.Server.Factories
         /// <returns>The original value or the max allowed.</returns>
         private static ushort ValidateAttributeCredits(uint attributeValue, uint allAttributes, uint maxAttributes)
         {
+            attributeValue = Math.Clamp(attributeValue, 10, 100);
+
             if ((attributeValue + allAttributes) > maxAttributes)
                 return (ushort)(maxAttributes - allAttributes);
 
@@ -471,7 +670,7 @@ namespace ACE.Server.Factories
 
             characterCreateInfo.Name = name;
 
-            Create(characterCreateInfo, weenie, guid, accountId, out var player);
+            Create(characterCreateInfo, weenie, guid, accountId, WeenieType.Creature, out var player);
 
             LevelUpPlayer(player);
 

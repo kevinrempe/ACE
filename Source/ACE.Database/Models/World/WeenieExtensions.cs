@@ -1,4 +1,5 @@
 using System.Linq;
+using ACE.Common.Extensions;
 using ACE.Database.Models.Shard;
 using ACE.Entity;
 using ACE.Entity.Enum;
@@ -131,6 +132,15 @@ namespace ACE.Database.Models.World
             return weenie.WeeniePropertiesTextureMap.FirstOrDefault(x => x.Index == index);
         }
 
+        public static string GetPluralName(this Weenie weenie)
+        {
+            var pluralName = weenie.GetProperty(PropertyString.PluralName);
+
+            if (pluralName == null)
+                pluralName = weenie.GetProperty(PropertyString.Name).Pluralize();
+
+            return pluralName;
+        }
 
         public static Biota CreateCopyAsBiota(this Weenie weenie, uint id)
         {
@@ -495,6 +505,28 @@ namespace ACE.Database.Models.World
             }
 
             return biota;
+        }
+
+        public static bool IsStackable(this Weenie weenie)
+        {
+            var weenieType = (WeenieType)weenie.Type;
+
+            return weenieType == WeenieType.Stackable      || weenieType == WeenieType.Food || weenieType == WeenieType.Coin       || weenieType == WeenieType.CraftTool
+                || weenieType == WeenieType.SpellComponent || weenieType == WeenieType.Gem  || weenieType == WeenieType.Ammunition || weenieType == WeenieType.Missile;
+        }
+
+        public static bool RequiresBackpackSlotOrIsContainer(this Weenie weenie)
+        {
+            var requiresBackPackSlot = weenie.GetProperty(PropertyBool.RequiresBackpackSlot) ?? false;
+
+            return requiresBackPackSlot || weenie.Type == (int)WeenieType.Container;
+        }
+
+        public static bool IsVendorService(this Weenie weenie)
+        {
+            var vendorService = weenie.GetProperty(PropertyBool.VendorService) ?? false;
+
+            return vendorService;
         }
     }
 }

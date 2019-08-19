@@ -4,6 +4,8 @@ using System.Linq;
 
 using ACE.Entity;
 using ACE.Entity.Enum;
+using ACE.Server.Entity;
+using ACE.Server.Entity.Actions;
 using ACE.Server.Network.GameMessages.Messages;
 using ACE.Server.Physics.Common;
 
@@ -39,25 +41,26 @@ namespace ACE.Server.WorldObjects
         /// </summary>
         public List<WorldObject> GetKnownObjects()
         {
-            return ObjMaint.ObjectTable.Values.Select(o => o.WeenieObj.WorldObject).ToList();
+            return ObjMaint.KnownObjects.Values.Select(o => o.WeenieObj.WorldObject).Where(wo => wo != null).ToList();
         }
 
         /// <summary>
         /// Sends a network message to player for CreateObject, if applicable
         /// </summary>
-        public void TrackObject(WorldObject worldObject)
+        public void TrackObject(WorldObject worldObject, bool delay = false)
         {
-            //Console.WriteLine($"TrackObject({worldObject.Name})");
+            //Console.WriteLine($"TrackObject({worldObject.Name}, {delay})");
 
             if (worldObject == null || worldObject.Guid == Guid)
                 return;
 
             // If Visibility is true, do not send object to client, object is meant for server side only, unless Adminvision is true.
-            if (worldObject.Visibility && !Adminvision)
-                return;
+            if (!worldObject.Visibility)
+                Session.Network.EnqueueSend(new GameMessageCreateObject(worldObject, Adminvision, Adminvision));
+            else if (worldObject.Visibility && Adminvision)
+                Session.Network.EnqueueSend(new GameMessageCreateObject(worldObject, Adminvision, Adminvision));
 
             //Console.WriteLine($"Player {Name} - TrackObject({worldObject.Name})");
-            Session.Network.EnqueueSend(new GameMessageCreateObject(worldObject));
 
             // add creature equipped objects / wielded items
             if (worldObject is Creature creature)
@@ -71,13 +74,13 @@ namespace ACE.Server.WorldObjects
         public bool AddTrackedObject(WorldObject worldObject)
         {
             // does this work for equipped objects?
-            if (ObjMaint.ObjectTable.Values.Contains(worldObject.PhysicsObj))
+            if (ObjMaint.KnownObjects.Values.Contains(worldObject.PhysicsObj))
             {
-                //Console.WriteLine($"Player {Name} - AddTrackedObject({worldObject}) skipped, already tracked");
+                //Console.WriteLine($"Player {Name} - AddTrackedObject({worldObject.Name}) skipped, already tracked");
                 return false;
             }
 
-            ObjMaint.AddObject(worldObject.PhysicsObj);
+            ObjMaint.AddKnownObject(worldObject.PhysicsObj);
             ObjMaint.AddVisibleObject(worldObject.PhysicsObj);
 
             TrackObject(worldObject);
@@ -91,10 +94,10 @@ namespace ACE.Server.WorldObjects
         {
             //Console.WriteLine($"Player {Name} - RemoveTrackedObject({remove})");
 
-            ObjMaint.RemoveObject(worldObject.PhysicsObj);
-
-            if (fromPickup)
+            if (fromPickup && !worldObject.WielderId.HasValue)
                 Session.Network.EnqueueSend(new GameMessagePickupEvent(worldObject));
+            else if (fromPickup && worldObject.WielderId.HasValue)
+                Session.Network.EnqueueSend(new GameMessagePickupEvent(worldObject), new GameMessageParentEvent(worldObject.Wielder, worldObject, (int)worldObject.ParentLocation, (int)worldObject.Placement));
             else
                 Session.Network.EnqueueSend(new GameMessageDeleteObject(worldObject));
 
@@ -135,10 +138,81 @@ namespace ACE.Server.WorldObjects
             if (formerWielder == this)
                 return;
 
+            // intended for cloaked objects, as DO's should not be sent for them
+            // but this breaks regular players, as the state of worldObject has already changed, and is never in a ChildLocation
+            //if (!IsInChildLocation(worldObject))
+                //return;
+
             // todo: Until we can fix the tracking system better, sending the PickupEvent like retail causes weapon dissapearing bugs on relog
             //Session.Network.EnqueueSend(new GameMessagePickupEvent(worldObject));
 
             Session.Network.EnqueueSend(new GameMessageDeleteObject(worldObject));
+        }
+
+        public void DeCloak()
+        {
+            if (CloakStatus == CloakStatus.Off)
+                return;
+
+            var actionChain = new ActionChain();
+
+            actionChain.AddAction(this, () =>
+            {
+                EnqueueBroadcast(false, new GameMessageDeleteObject(this));
+            });
+            actionChain.AddAction(this, () =>
+            {
+                NoDraw = true;
+                EnqueueBroadcastPhysicsState();
+                Visibility = false;
+            });
+            actionChain.AddDelaySeconds(.5);
+            actionChain.AddAction(this, () =>
+            {
+                EnqueueBroadcast(false, new GameMessageCreateObject(this));
+            });
+            actionChain.AddDelaySeconds(.5);
+            actionChain.AddAction(this, () =>
+            {
+                Cloaked = false;
+                Ethereal = false;
+                NoDraw = false;
+                EnqueueBroadcastPhysicsState();
+            });
+
+            actionChain.EnqueueChain();
+        }
+
+        public void Cloak()
+        {
+            if (CloakStatus == CloakStatus.On)
+                return;
+
+            var actionChain = new ActionChain();
+
+            actionChain.AddAction(this, () =>
+            {
+                Cloaked = true;
+                Ethereal = true;
+                NoDraw = true;
+                EnqueueBroadcastPhysicsState();
+            });
+            actionChain.AddAction(this, () =>
+            {
+                EnqueueBroadcast(false, new GameMessageDeleteObject(this));
+            });
+            actionChain.AddDelaySeconds(.5);
+            actionChain.AddAction(this, () =>
+            {
+                Visibility = true;
+            });
+            actionChain.AddDelaySeconds(.5);
+            actionChain.AddAction(this, () =>
+            {
+                EnqueueBroadcast(false, new GameMessageCreateObject(this, true, true));
+            });
+
+            actionChain.EnqueueChain();
         }
     }
 }

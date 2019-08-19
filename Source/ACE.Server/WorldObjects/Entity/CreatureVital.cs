@@ -1,6 +1,7 @@
 using System;
 using System.Linq;
 
+using ACE.Common.Extensions;
 using ACE.Database.Models.Shard;
 using ACE.Entity.Enum;
 using ACE.Entity.Enum.Properties;
@@ -76,7 +77,7 @@ namespace ACE.Server.WorldObjects.Entity
         {
             get
             {
-                var attr = AttributeFormula.GetFormula(creature, Vital);
+                var attr = AttributeFormula.GetFormula(creature, Vital, false);
 
                 return StartingValue + Ranks + attr;
             }
@@ -92,21 +93,33 @@ namespace ACE.Server.WorldObjects.Entity
         {
             get
             {
-                uint total = Base;
+                var attr = AttributeFormula.GetFormula(creature, Vital, true);
 
-                // TODO: include all buffs
-                total += (uint)Math.Round(creature.EnchantmentManager.GetVitalMod(this));
+                uint total = StartingValue + Ranks + attr;
+
+                // apply multiplicative enchantments first
+                var multiplier = creature.EnchantmentManager.GetVitalMod_Multiplier(this);
+
+                var fTotal = total * multiplier;
 
                 if (creature is Player player)
                 {
                     var vitae = player.Vitae;
 
                     if (vitae != 1.0f)
-                        total = (uint)Math.Round(total * vitae);
+                        fTotal *= vitae;
                 }
+
+                // then additives
+                var additives = creature.EnchantmentManager.GetVitalMod_Additives(this);
+
+                total = (uint)(fTotal + additives).Round();
+
                 return total;
             }
         }
+
+        public uint Missing => MaxValue - Current;
 
         public ModifierType ModifierType
         {

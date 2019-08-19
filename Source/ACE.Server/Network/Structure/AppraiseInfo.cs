@@ -26,6 +26,7 @@ namespace ACE.Server.Network.Structure
         public ushort SpellId { get; set; }
         public _EnchantmentState EnchantmentState { get; set; }
     }
+
     /// <summary>
     /// Handles calculating and sending all object appraisal info
     /// </summary>
@@ -41,6 +42,7 @@ namespace ACE.Server.Network.Structure
         public Dictionary<PropertyFloat, double> PropertiesFloat;
         public Dictionary<PropertyString, string> PropertiesString;
         public Dictionary<PropertyDataId, uint> PropertiesDID;
+        public Dictionary<PropertyInstanceId, uint> PropertiesIID;
 
         public List<AppraisalSpellBook> SpellBook;
 
@@ -59,17 +61,23 @@ namespace ACE.Server.Network.Structure
         public ArmorLevel ArmorLevels;
 
         // This helps ensure the item will identify properly. Some "items" are technically "Creatures".
-        private bool NPCLooksLikeObject; 
+        private bool NPCLooksLikeObject;
+
+        public AppraiseInfo()
+        {
+            Flags = IdentifyResponseFlags.None;
+            Success = false;
+        }
 
         /// <summary>
         /// Construct all of the info required for appraising any WorldObject
         /// </summary>
         public AppraiseInfo(WorldObject wo, Player examiner, bool success = true)
         {
-            generateAppraisalInfo(wo, examiner, success);
+            BuildProfile(wo, examiner, success);
         }
 
-        private void generateAppraisalInfo(WorldObject wo, Player examiner, bool success = true)
+        public void BuildProfile(WorldObject wo, Player examiner, bool success = true)
         {
             //Console.WriteLine("Appraise: " + wo.Guid);
             Success = success;
@@ -82,6 +90,14 @@ namespace ACE.Server.Network.Structure
 
             // Help us make sure the item identify properly
             NPCLooksLikeObject = wo.GetProperty(PropertyBool.NpcLooksLikeObject) ?? false;
+
+            if (PropertiesIID.ContainsKey(PropertyInstanceId.AllowedWielder))
+                if (!PropertiesBool.ContainsKey(PropertyBool.AppraisalHasAllowedWielder))
+                    PropertiesBool.Add(PropertyBool.AppraisalHasAllowedWielder, true);
+
+            if (PropertiesIID.ContainsKey(PropertyInstanceId.AllowedActivator))
+                if (!PropertiesBool.ContainsKey(PropertyBool.AppraisalHasAllowedActivator))
+                    PropertiesBool.Add(PropertyBool.AppraisalHasAllowedActivator, true);
 
             // armor / clothing / shield
             if (wo is Clothing || wo.IsShield)
@@ -102,21 +118,101 @@ namespace ACE.Server.Network.Structure
                 // If wo is locked, append skill check percent, as int, to properties for id panel display on chances of success
                 if (wo.IsLocked)
                 {
-                    var playerLockPickSkill = examiner.Skills[Skill.Lockpick].Current;
+                    var resistLockpick = LockHelper.GetResistLockpick(wo);
 
-                    var doorLockPickResistance = wo.ResistLockpick;
+                    if (resistLockpick != null)
+                    {
+                        PropertiesInt[PropertyInt.ResistLockpick] = (int)resistLockpick;
 
-                    var lockpickSuccessPercent = SkillCheck.GetSkillChance((int)playerLockPickSkill, (int)doorLockPickResistance) * 100;
+                        var pickSkill = examiner.Skills[Skill.Lockpick].Current;
 
-                    if (!PropertiesInt.ContainsKey(PropertyInt.AppraisalLockpickSuccessPercent))
-                        PropertiesInt.Add(PropertyInt.AppraisalLockpickSuccessPercent, (int)lockpickSuccessPercent);
+                        var successChance = SkillCheck.GetSkillChance((int)pickSkill, (int)resistLockpick) * 100;
+
+                        if (!PropertiesInt.ContainsKey(PropertyInt.AppraisalLockpickSuccessPercent))
+                            PropertiesInt.Add(PropertyInt.AppraisalLockpickSuccessPercent, (int)successChance);
+                    }
                 }                
+            }
+
+            if (wo is Corpse)
+            {
+                PropertiesBool.Clear();
+                PropertiesDID.Clear();
+                PropertiesFloat.Clear();
+                PropertiesInt64.Clear();
+
+                var discardInts = PropertiesInt.Where(x => x.Key != PropertyInt.EncumbranceVal && x.Key != PropertyInt.Value).Select(x => x.Key).ToList();
+                foreach (var key in discardInts)
+                    PropertiesInt.Remove(key);
+                var discardString = PropertiesString.Where(x => x.Key != PropertyString.LongDesc).Select(x => x.Key).ToList();
+                foreach (var key in discardString)
+                    PropertiesString.Remove(key);
             }
 
             if (wo is Portal)
             {
                 if (PropertiesInt.ContainsKey(PropertyInt.EncumbranceVal))
                     PropertiesInt.Remove(PropertyInt.EncumbranceVal);
+            }
+
+            if (wo is SlumLord slumLord)
+            {                
+                PropertiesBool.Clear();
+                PropertiesDID.Clear();
+                PropertiesFloat.Clear();
+                PropertiesIID.Clear();
+                //PropertiesInt.Clear();
+                PropertiesInt64.Clear();
+                PropertiesString.Clear();
+
+                var longDesc = "";
+
+                if (slumLord.HouseOwner.HasValue && slumLord.HouseOwner.Value > 0)
+                {
+                    longDesc = $"The current maintenance has {(slumLord.IsRentPaid() || !PropertyManager.GetBool("house_rent_enabled").Item ? "" : "not ")}been paid.\n";
+
+                    PropertiesInt.Clear();
+                }
+                else
+                {
+                    //longDesc = $"This house is {(slumLord.HouseStatus == HouseStatus.Disabled ? "not " : "")}available for purchase.\n"; // this was the retail msg.
+                    longDesc = $"This {(slumLord.House.HouseType == HouseType.Undef ? "house" : slumLord.House.HouseType.ToString().ToLower())} is {(slumLord.House.HouseStatus == HouseStatus.Disabled ? "not " : "")}available for purchase.\n";
+
+                    var discardInts = PropertiesInt.Where(x => x.Key != PropertyInt.HouseStatus && x.Key != PropertyInt.HouseType && x.Key != PropertyInt.MinLevel && x.Key != PropertyInt.MaxLevel && x.Key != PropertyInt.AllegianceMinLevel && x.Key != PropertyInt.AllegianceMaxLevel).Select(x => x.Key).ToList();
+                    foreach (var key in discardInts)
+                        PropertiesInt.Remove(key);
+                }
+
+                if (slumLord.HouseRequiresMonarch)
+                    longDesc += "You must be a monarch to purchase and maintain this dwelling.\n";
+
+                if (slumLord.AllegianceMinLevel.HasValue)
+                {
+                    var allegianceMinLevel = PropertyManager.GetLong("mansion_min_rank", -1).Item;
+                    if (allegianceMinLevel == -1)
+                        allegianceMinLevel = slumLord.AllegianceMinLevel.Value;
+
+                    longDesc += $"Restricted to characters of allegiance rank {allegianceMinLevel} or greater.\n";
+                }
+
+                PropertiesString.Add(PropertyString.LongDesc, longDesc);
+            }
+
+            if (wo is Storage)
+            {
+                var longDesc = "";
+
+                if (wo.HouseOwner.HasValue && wo.HouseOwner.Value > 0)
+                    longDesc = $"Owned by {wo.ParentLink.HouseOwnerName}\n";
+
+                var discardString = PropertiesString.Where(x => x.Key != PropertyString.Use).Select(x => x.Key).ToList();
+                foreach (var key in discardString)
+                    PropertiesString.Remove(key);
+
+                PropertiesString.Add(PropertyString.LongDesc, longDesc);
+
+                if (PropertiesInt.ContainsKey(PropertyInt.Value))
+                    PropertiesInt[PropertyInt.Value] = wo.Biota.GetProperty(PropertyInt.Value, wo.BiotaDatabaseLock) ?? 200; // Value is masked to base value of Storage
             }
 
             if (wo is Hook)
@@ -128,7 +224,7 @@ namespace ACE.Server.Network.Structure
                     WorldObject hookedItem = hook.Inventory.First().Value;
 
                     // Hooked items have a custom "description", containing the desc of the sub item and who the owner of the house is (if any)
-                    generateAppraisalInfo(hookedItem, examiner, success);
+                    BuildProfile(hookedItem, examiner, success);
                     string baseDescString = "";
                     if (wo.ParentLink.HouseOwner != null)
                     {
@@ -158,6 +254,18 @@ namespace ACE.Server.Network.Structure
                 }
             }
 
+            if (wo is ManaStone)
+            {
+                var useMessage = "";
+
+                if (wo.ItemCurMana.HasValue)
+                    useMessage = "Use on a magic item to give the stone's stored Mana to that item.";
+                else
+                    useMessage = "Use on a magic item to destroy that item and drain its Mana.";
+
+                PropertiesString[PropertyString.Use] = useMessage;
+            }
+
             BuildFlags();
         }
 
@@ -169,6 +277,7 @@ namespace ACE.Server.Network.Structure
             PropertiesFloat = wo.GetAllPropertyFloat().Where(x => ClientProperties.PropertiesDouble.Contains((ushort)x.Key)).ToDictionary(x => x.Key, x => x.Value);
             PropertiesString = wo.GetAllPropertyString().Where(x => ClientProperties.PropertiesString.Contains((ushort)x.Key)).ToDictionary(x => x.Key, x => x.Value);
             PropertiesDID = wo.GetAllPropertyDataId().Where(x => ClientProperties.PropertiesDataId.Contains((ushort)x.Key)).ToDictionary(x => x.Key, x => x.Value);
+            PropertiesIID = wo.GetAllPropertyInstanceId().Where(x => ClientProperties.PropertiesInstanceId.Contains((ushort)x.Key)).ToDictionary(x => x.Key, x => x.Value);
 
             if (wo is Player player)
             {
@@ -187,8 +296,11 @@ namespace ACE.Server.Network.Structure
                     PropertiesInt.Remove(PropertyInt.NumCharacterTitles);
 
                 // handle dynamic properties for appraisal
-                if (player.Allegiance != null)
+                if (player.Allegiance != null && player.AllegianceNode != null)
                 {
+                    if (player.Allegiance.AllegianceName != null)
+                        PropertiesString[PropertyString.AllegianceName] = player.Allegiance.AllegianceName;
+
                     if (player.AllegianceNode.IsMonarch)
                     {
                         PropertiesInt[PropertyInt.AllegianceFollowers] = player.AllegianceNode.TotalFollowers;
@@ -223,7 +335,12 @@ namespace ACE.Server.Network.Structure
             if (wielder == null || !wo.IsEnchantable) return;
 
             if (PropertiesFloat.ContainsKey(PropertyFloat.WeaponDefense) && !(wo is Missile) && !(wo is Ammunition))
-                PropertiesFloat[PropertyFloat.WeaponDefense] += wielder.EnchantmentManager.GetDefenseMod();
+            {
+                var defenseMod = wo.EnchantmentManager.GetDefenseMod();
+                var auraDefenseMod = wo.IsEnchantable ? wielder.EnchantmentManager.GetDefenseMod() : 0.0f;
+
+                PropertiesFloat[PropertyFloat.WeaponDefense] += defenseMod + auraDefenseMod;
+            }
 
             if (PropertiesFloat.ContainsKey(PropertyFloat.ManaConversionMod))
             {
@@ -239,13 +356,17 @@ namespace ACE.Server.Network.Structure
 
             if (PropertiesFloat.ContainsKey(PropertyFloat.ElementalDamageMod))
             {
-                var elementalDamageMod = wielder.EnchantmentManager.GetElementalDamageMod();
-                if (elementalDamageMod != 0)
-                {
-                    PropertiesFloat[PropertyFloat.ElementalDamageMod] += elementalDamageMod;
+                var weaponEnchantments = wo.EnchantmentManager.GetElementalDamageMod();
+                var wielderEnchantments = wielder.EnchantmentManager.GetElementalDamageMod();
 
-                    ResistHighlight = ResistMaskHelper.GetHighlightMask(wielder);
-                    ResistColor = ResistMaskHelper.GetColorMask(wielder);
+                var enchantments = weaponEnchantments + wielderEnchantments;
+
+                if (enchantments != 0)
+                {
+                    PropertiesFloat[PropertyFloat.ElementalDamageMod] += enchantments;
+
+                    ResistHighlight = ResistMaskHelper.GetHighlightMask(wielder, wo);
+                    ResistColor = ResistMaskHelper.GetColorMask(wielder, wo);
                 }
             }
         }
@@ -261,7 +382,7 @@ namespace ACE.Server.Network.Structure
             if (wo.SpellDID.HasValue)
                 SpellBook.Add(new AppraisalSpellBook { SpellId = (ushort)wo.SpellDID.Value, EnchantmentState = AppraisalSpellBook._EnchantmentState.Off });
 
-            foreach ( var biotaPropertiesSpellBook in wo.Biota.BiotaPropertiesSpellBook)
+            foreach ( var biotaPropertiesSpellBook in wo.Biota.BiotaPropertiesSpellBook.Where(i => i.Spell != wo.SpellDID))
                 SpellBook.Add(new AppraisalSpellBook { SpellId = (ushort)biotaPropertiesSpellBook.Spell, EnchantmentState = AppraisalSpellBook._EnchantmentState.Off });
         }
 
@@ -293,9 +414,8 @@ namespace ACE.Server.Network.Structure
                 {
                     if (worldObject is Caster)
                     {
-                        // Caster weapon only item Auras
                         if ((enchantment.SpellCategory == (uint)SpellCategory.DefenseModLowering)
-                            || (enchantment.SpellCategory == (uint)SpellCategory.AppraisalResistanceRaising)
+                            || (enchantment.SpellCategory == (uint)SpellCategory.ManaConversionModLowering)
                             || (GetSpellName((uint)enchantment.SpellId).Contains("Spirit"))) // Spirit Loather spells
                         {
                             activeSpells.Add(new AppraisalSpellBook() { SpellId = (ushort)enchantment.SpellId, EnchantmentState = AppraisalSpellBook._EnchantmentState.On });
@@ -308,7 +428,6 @@ namespace ACE.Server.Network.Structure
                     }
                     else
                     {
-                        // Other weapon type Auras
                         if ((enchantment.SpellCategory == (uint)SpellCategory.AttackModLowering)
                             || (enchantment.SpellCategory == (uint)SpellCategory.DamageLowering)
                             || (enchantment.SpellCategory == (uint)SpellCategory.DefenseModLowering)
@@ -328,7 +447,8 @@ namespace ACE.Server.Network.Structure
                         {
                             // Caster weapon only item Auras
                             if ((enchantment.SpellCategory == (uint)SpellCategory.DefenseModRaising)
-                                || (enchantment.SpellCategory == (uint)SpellCategory.AppraisalResistanceLowering)
+                                || (enchantment.SpellCategory == (uint)SpellCategory.DefenseModRaisingRare)
+                                || (enchantment.SpellCategory == (uint)SpellCategory.ManaConversionModRaising)
                                 || (enchantment.SpellCategory == (uint)SpellCategory.SpellDamageRaising))
                             {
                                 activeSpells.Add(new AppraisalSpellBook() { SpellId = (ushort)enchantment.SpellId, EnchantmentState = AppraisalSpellBook._EnchantmentState.On });
@@ -336,16 +456,21 @@ namespace ACE.Server.Network.Structure
                         }
                         else if (worldObject is Missile || worldObject is Ammunition)
                         {
-                            if ((enchantment.SpellCategory == (uint)SpellCategory.DamageRaising))
+                            if ((enchantment.SpellCategory == (uint)SpellCategory.DamageRaising)
+                                || (enchantment.SpellCategory == (uint)SpellCategory.DamageRaisingRare))
                                 activeSpells.Add(new AppraisalSpellBook() { SpellId = (ushort)enchantment.SpellId, EnchantmentState = AppraisalSpellBook._EnchantmentState.On });
                         }
                         else
                         {
                             // Other weapon type Auras
                             if ((enchantment.SpellCategory == (uint)SpellCategory.AttackModRaising)
+                                || (enchantment.SpellCategory == (uint)SpellCategory.AttackModRaisingRare)
                                 || (enchantment.SpellCategory == (uint)SpellCategory.DamageRaising)
+                                || (enchantment.SpellCategory == (uint)SpellCategory.DamageRaisingRare)
                                 || (enchantment.SpellCategory == (uint)SpellCategory.DefenseModRaising)
-                                || (enchantment.SpellCategory == (uint)SpellCategory.WeaponTimeRaising))
+                                || (enchantment.SpellCategory == (uint)SpellCategory.DefenseModRaisingRare)
+                                || (enchantment.SpellCategory == (uint)SpellCategory.WeaponTimeRaising)
+                                || (enchantment.SpellCategory == (uint)SpellCategory.WeaponTimeRaisingRare))
                             {
                                 activeSpells.Add(new AppraisalSpellBook() { SpellId = (ushort)enchantment.SpellId, EnchantmentState = AppraisalSpellBook._EnchantmentState.On });
                             }
@@ -384,6 +509,9 @@ namespace ACE.Server.Network.Structure
             ArmorLevels = new ArmorLevel(creature);
 
             AddRatings(creature);
+
+            if (PropertiesInt.ContainsKey(PropertyInt.EncumbranceVal))
+                PropertiesInt.Remove(PropertyInt.EncumbranceVal);
         }
 
         private void AddRatings(Creature creature)
@@ -391,7 +519,7 @@ namespace ACE.Server.Network.Structure
             var damageRating = creature.GetDamageRating();
 
             // include heritage / weapon type rating?
-            var weapon = creature.GetEquippedWeapon();
+            var weapon = creature.GetEquippedWeapon() ?? creature.GetEquippedWand();
             if (creature.GetHeritageBonus(weapon))
                 damageRating += 5;
 
@@ -494,14 +622,7 @@ namespace ACE.Server.Network.Structure
             if (PropertiesInt.Count > 0)
                 Flags |= IdentifyResponseFlags.IntStatsTable;
             if (PropertiesInt64.Count > 0)
-                Flags |= IdentifyResponseFlags.Int64StatsTable;
-            if (SpellBook.Count > 0)
-                Flags |= IdentifyResponseFlags.SpellBook;
-            if (ResistHighlight != 0)
-                Flags |= IdentifyResponseFlags.ResistEnchantmentBitfield;
-            
-			if (NPCLooksLikeObject) return;
-				
+                Flags |= IdentifyResponseFlags.Int64StatsTable;         				
 			if (PropertiesBool.Count > 0)
                 Flags |= IdentifyResponseFlags.BoolStatsTable;
             if (PropertiesFloat.Count > 0)
@@ -510,9 +631,14 @@ namespace ACE.Server.Network.Structure
                 Flags |= IdentifyResponseFlags.StringStatsTable;
             if (PropertiesDID.Count > 0)
                 Flags |= IdentifyResponseFlags.DidStatsTable;
+            if (SpellBook.Count > 0)
+                Flags |= IdentifyResponseFlags.SpellBook;
+
+            if (ResistHighlight != 0)
+                Flags |= IdentifyResponseFlags.ResistEnchantmentBitfield;
             if (ArmorProfile != null)
                 Flags |= IdentifyResponseFlags.ArmorProfile;
-            if (CreatureProfile != null)
+            if (CreatureProfile != null && !NPCLooksLikeObject)
                 Flags |= IdentifyResponseFlags.CreatureProfile;
             if (WeaponProfile != null)
                 Flags |= IdentifyResponseFlags.WeaponProfile;
@@ -578,8 +704,10 @@ namespace ACE.Server.Network.Structure
         }
 
         // TODO: generics
-        public static void Write(this BinaryWriter writer, Dictionary<PropertyInt, int> properties)
+        public static void Write(this BinaryWriter writer, Dictionary<PropertyInt, int> _properties)
         {
+            var properties = new SortedDictionary<PropertyInt, int>(_properties);
+
             PHashTable.WriteHeader(writer, properties.Count);
             foreach (var kvp in properties)
             {
@@ -588,8 +716,10 @@ namespace ACE.Server.Network.Structure
             }
         }
 
-        public static void Write(this BinaryWriter writer, Dictionary<PropertyInt64, long> properties)
+        public static void Write(this BinaryWriter writer, Dictionary<PropertyInt64, long> _properties)
         {
+            var properties = new SortedDictionary<PropertyInt64, long>(_properties);
+
             PHashTable.WriteHeader(writer, properties.Count);
             foreach (var kvp in properties)
             {
@@ -598,8 +728,10 @@ namespace ACE.Server.Network.Structure
             }
         }
 
-        public static void Write(this BinaryWriter writer, Dictionary<PropertyBool, bool> properties)
+        public static void Write(this BinaryWriter writer, Dictionary<PropertyBool, bool> _properties)
         {
+            var properties = new SortedDictionary<PropertyBool, bool>(_properties);
+
             PHashTable.WriteHeader(writer, properties.Count);
             foreach (var kvp in properties)
             {
@@ -608,8 +740,10 @@ namespace ACE.Server.Network.Structure
             }
         }
 
-        public static void Write(this BinaryWriter writer, Dictionary<PropertyFloat, double> properties)
+        public static void Write(this BinaryWriter writer, Dictionary<PropertyFloat, double> _properties)
         {
+            var properties = new SortedDictionary<PropertyFloat, double>(_properties);
+
             PHashTable.WriteHeader(writer, properties.Count);
             foreach (var kvp in properties)
             {
@@ -618,8 +752,10 @@ namespace ACE.Server.Network.Structure
             }
         }
 
-        public static void Write(this BinaryWriter writer, Dictionary<PropertyString, string> properties)
+        public static void Write(this BinaryWriter writer, Dictionary<PropertyString, string> _properties)
         {
+            var properties = new SortedDictionary<PropertyString, string>(_properties);
+
             PHashTable.WriteHeader(writer, properties.Count);
             foreach (var kvp in properties)
             {
@@ -628,8 +764,10 @@ namespace ACE.Server.Network.Structure
             }
         }
 
-        public static void Write(this BinaryWriter writer, Dictionary<PropertyDataId, uint> properties)
+        public static void Write(this BinaryWriter writer, Dictionary<PropertyDataId, uint> _properties)
         {
+            var properties = new SortedDictionary<PropertyDataId, uint>(_properties);
+
             PHashTable.WriteHeader(writer, properties.Count);
             foreach (var kvp in properties)
             {

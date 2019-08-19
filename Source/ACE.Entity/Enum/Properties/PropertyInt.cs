@@ -136,7 +136,6 @@ namespace ACE.Entity.Enum.Properties
         PhysicsState                             = 93,
         [ServerOnly]
         TargetType                               = 94,
-        [Ephemeral]
         RadarBlipColor                           = 95,
         EncumbranceCapacity                      = 96,
         LoginTimestamp                           = 97,
@@ -501,6 +500,7 @@ namespace ACE.Entity.Enum.Properties
         WeaponAuraDamage                         = 360,
         [SendOnLogin]
         WeaponAuraSpeed                          = 361,
+        [SendOnLogin]
         SummoningMastery                         = 362,
         HeartbeatLifespan                        = 363,
         UseLevelRequirement                      = 364,
@@ -582,6 +582,18 @@ namespace ACE.Entity.Enum.Properties
         AllegianceOfficerRank                   = 9010,
         [ServerOnly]
         HouseRentTimestamp                      = 9011,
+        /// <summary>
+        ///  Stores the player's selected hairstyle at creation or after a barber use. This is used only for Gear Knights and Olthoi characters who have more than a single part/texture for a "hairstyle" (BodyStyle)
+        /// </summary>
+        [ServerOnly]
+        Hairstyle = 9012,
+        /// <summary>
+        /// Used to store the calculated Clothing Priority for use with armor reduced items and items like Over-Robes.
+        /// </summary>
+        [Ephemeral][ServerOnly]
+        VisualClothingPriority                  = 9013,
+        [ServerOnly]
+        SquelchGlobal                           = 9014,
     }
 
     public static class PropertyIntExtensions
@@ -711,10 +723,11 @@ namespace ACE.Entity.Enum.Properties
                     return System.Enum.GetName(typeof(ArmorType), value);
                 case PropertyInt.ParentLocation:
                     return System.Enum.GetName(typeof(ParentLocation), value);
-                case PropertyInt.PlacementPosition:
-                    return System.Enum.GetName(typeof(Placement), value);
                 case PropertyInt.HouseStatus:
                     return System.Enum.GetName(typeof(HouseStatus), value);
+
+                case PropertyInt.UseCreatesContractId:
+                    return System.Enum.GetName(typeof(ContractId), value);
             }
 
             return null;

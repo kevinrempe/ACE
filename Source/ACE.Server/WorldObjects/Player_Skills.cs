@@ -1,12 +1,12 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 
 using ACE.Database;
 using ACE.DatLoader;
 using ACE.Entity.Enum;
 using ACE.Entity.Enum.Properties;
 using ACE.Server.Entity.Actions;
+using ACE.Server.Managers;
 using ACE.Server.Network.GameMessages.Messages;
 using ACE.Server.WorldObjects.Entity;
 
@@ -81,6 +81,7 @@ namespace ACE.Server.WorldObjects
         /// <summary>
         /// Sets the skill to specialized status
         /// </summary>
+        /// <param name="resetSkill">only set to TRUE during character creation. set to FALSE during temple / asheron's castle</param>
         public bool SpecializeSkill(Skill skill, int creditsSpent, bool resetSkill = true)
         {
             var cs = GetCreatureSkill(skill);
@@ -91,8 +92,14 @@ namespace ACE.Server.WorldObjects
                 {
                     if (resetSkill)
                     {
+                        // this path for char creation?
                         cs.Ranks = 0;
                         cs.ExperienceSpent = 0;
+                    }
+                    else
+                    {
+                        // this path for temple spec?
+                        cs.Ranks = (ushort)CalcSkillRank(SkillAdvancementClass.Specialized, cs.ExperienceSpent);
                     }
 
                     cs.InitLevel += 5;
@@ -136,6 +143,7 @@ namespace ACE.Server.WorldObjects
                 {
                     cs.AdvancementClass = SkillAdvancementClass.Untrained;
                     cs.InitLevel -= 5;
+                    AvailableSkillCredits += creditsSpent;
                 }
 
                 cs.Ranks = 0;
@@ -176,7 +184,7 @@ namespace ACE.Server.WorldObjects
         /// <summary>
         /// Increases a skill by some amount of points
         /// </summary>
-        public void AwardSkillPoints(Skill skill, uint amount, bool usage = false)
+        public void AwardSkillPoints(Skill skill, uint amount)
         {
             var creatureSkill = GetCreatureSkill(skill);
 
@@ -190,21 +198,37 @@ namespace ACE.Server.WorldObjects
                 if (xpToRank == uint.MaxValue)
                     return;
 
-                RaiseSkillGameAction(skill, xpToRank, usage);
+                AwardSkillXP(skill, xpToRank);
+            }
+        }
+
+        /// <summary>
+        /// Wrapper method used for increasing totalXP and then using the amount granted by RaiseSkillGameAction
+        /// </summary>
+        /// <param name="skill"></param>
+        /// <param name="amount"></param>
+        public void AwardSkillXP(Skill skill, uint amount)
+        {
+            var playerSkill = GetCreatureSkill(skill);
+
+            if (!IsSkillMaxRank(playerSkill.Ranks, playerSkill.AdvancementClass))
+            {
+                GrantXP(amount, XpType.Emote, ShareType.None);
+                RaiseSkillGameAction(skill, amount);
             }
         }
 
         /// <summary>
         /// Increases a skill from the 'Raise skill' buttons, or through natural usage
         /// </summary>
-        public void RaiseSkillGameAction(Skill skill, uint amount, bool usage = false)
+        public void RaiseSkillGameAction(Skill skill, uint amount)
         {
             var creatureSkill = GetCreatureSkill(skill);
 
             var prevRank = creatureSkill.Ranks;
             var prevXP = creatureSkill.ExperienceSpent;
 
-            uint result = SpendSkillXp(creatureSkill, amount, usage);
+            uint result = SpendSkillXp(creatureSkill, amount);
 
             string messageText;
 
@@ -231,22 +255,13 @@ namespace ACE.Server.WorldObjects
                 // skill usage
                 Session.Network.EnqueueSend(new GameMessagePrivateUpdateSkill(this, creatureSkill));
             }
-            else if (!usage)
-            {
-                messageText = $"Your attempt to raise {skill} has failed!";
-                Session.Network.EnqueueSend(new GameMessageSystemChat(messageText, ChatMessageType.Advancement));
-            }
         }
 
         /// <summary>
         /// Adds experience points to a skill
         /// </summary>
-        /// <remarks>
-        ///     Known Issues:
-        ///         1. Earned XP usage in ranks besides 1 or 10 need to be accounted for.
-        /// </remarks>
         /// <returns>0 if it failed, total skill experience if successful</returns>
-        private uint SpendSkillXp(CreatureSkill skill, uint amount, bool usage = false, bool sendNetworkPropertyUpdate = true)
+        private uint SpendSkillXp(CreatureSkill skill, uint amount, bool sendNetworkPropertyUpdate = true)
         {
             uint result = 0u;
 
@@ -257,44 +272,9 @@ namespace ACE.Server.WorldObjects
             if (skill.Ranks >= (xpList.Count - 1))
                 return result;
 
-            ushort rankUps = 0;
-            uint currentRankXp = skill.ExperienceSpent;
-            uint rank1 = xpList[Convert.ToInt32(skill.Ranks) + 1] - currentRankXp;
-            uint rank10;
-            ushort rank10Offset = 0;
+            ushort rankUps = (ushort)(Player.CalcSkillRank(skill.AdvancementClass, skill.ExperienceSpent + amount) - skill.Ranks);
 
-            if (skill.Ranks + 10 >= (xpList.Count))
-            {
-                rank10Offset = (ushort)(10 - ((skill.Ranks + 10) - (xpList.Count - 1)));
-                rank10 = xpList[skill.Ranks + rank10Offset] - currentRankXp;
-            }
-            else
-            {
-                rank10 = xpList[skill.Ranks + 10] - currentRankXp;
-            }
-
-            if (amount >= rank10)
-            {
-                if (rank10Offset > 0)
-                    rankUps = rank10Offset;
-                else
-                    rankUps = 10;
-            }
-            else if (amount >= rank1)
-                rankUps = 1;
-            
-            if (!usage)
-            {
-                if (SpendXP(amount, sendNetworkPropertyUpdate))
-                {
-                    if (rankUps > 0)
-                        skill.Ranks += rankUps;
-
-                    skill.ExperienceSpent += amount;
-                    result = skill.ExperienceSpent;
-                }
-            }
-            else
+            if (SpendXP(amount, sendNetworkPropertyUpdate))
             {
                 if (rankUps > 0)
                     skill.Ranks += rankUps;
@@ -328,7 +308,7 @@ namespace ACE.Server.WorldObjects
                     rank10 = xpList[Convert.ToInt32(skill.Ranks) + 10] - currentRankXp;
                 }
 
-                if (SpendSkillXp(skill, rank10, false, sendNetworkPropertyUpdate) == 0)
+                if (SpendSkillXp(skill, rank10, sendNetworkPropertyUpdate) == 0)
                     break;
             }
         }
@@ -345,7 +325,7 @@ namespace ACE.Server.WorldObjects
             var nextLevelXP = GetXPBetweenSkillLevels(creatureSkill.AdvancementClass, creatureSkill.Ranks, creatureSkill.Ranks + 1).Value;
             var amount = (uint)Math.Min(nextLevelXP * percent, max);
 
-            RaiseSkillGameAction(skill, amount, true);
+            AwardSkillXP(skill, amount);
         }
 
         /// <summary>
@@ -363,7 +343,7 @@ namespace ACE.Server.WorldObjects
         /// <summary>
         /// Returns the XP curve table based on trained or specialized skill
         /// </summary>
-        public List<uint> GetXPTable(SkillAdvancementClass status)
+        public static List<uint> GetXPTable(SkillAdvancementClass status)
         {
             var xpTable = DatManager.PortalDat.XpTable;
             if (status == SkillAdvancementClass.Trained)
@@ -404,7 +384,7 @@ namespace ACE.Server.WorldObjects
         /// </summary>
         /// <param name="sac">Trained or specialized skill</param>
         /// <param name="xpAmount">The amount of xp used to make the purchase</param>
-        public int GetRankForXP(SkillAdvancementClass sac, uint xpAmount)
+        public static int CalcSkillRank(SkillAdvancementClass sac, uint xpAmount)
         {
             var rankXpTable = GetXPTable(sac);
             for (var i = rankXpTable.Count - 1; i >= 0; i--)
@@ -572,7 +552,17 @@ namespace ACE.Server.WorldObjects
 
         public override bool GetHeritageBonus(WorldObject weapon)
         {
-            return GetHeritageBonus(GetWeaponType(weapon));
+            if (weapon == null || !weapon.IsMasterable)
+                return false;
+
+            if (PropertyManager.GetBool("universal_masteries").Item)
+            {
+                // https://asheron.fandom.com/wiki/Spring_2014_Update
+                // end of retail - universal masteries
+                return true;
+            }
+            else
+                return GetHeritageBonus(GetWeaponType(weapon));
         }
 
         public bool GetHeritageBonus(WeaponType weaponType)
@@ -635,6 +625,9 @@ namespace ACE.Server.WorldObjects
             if (weapon == null)
                 return WeaponType.Undef;    // unarmed?
 
+            if (weapon is Caster)
+                return WeaponType.Magic;
+
             var weaponType = weapon.GetProperty(PropertyInt.WeaponType);
             if (weaponType != null)
                 return (WeaponType)weaponType;
@@ -666,46 +659,101 @@ namespace ACE.Server.WorldObjects
             { Skill.VoidMagic, WeaponType.Magic },
         };
 
-        public void HandleAugsForwardCompatibility()
+        /// <summary>
+        /// Resets the skill, refunds all experience and skill credits, if allowed.
+        /// </summary>
+        public bool ResetSkill(Skill skillToBeReset)
         {
-            switch (HeritageGroup)
+            var cs = GetCreatureSkill(skillToBeReset);
+
+            //Check to make sure we got a valid skill back
+            if (cs == null)
+                return false;
+
+            //Gather costs associated with manipulating currently selected skill
+            DatManager.PortalDat.SkillTable.SkillBaseHash.TryGetValue((uint)cs.Skill, out var skill);
+
+            if (skill == null)
+                return false;
+
+            var skillRemoved = false;
+            var skillUntrainable = IsSkillUntrainable(skillToBeReset);
+            var typeOfSkill = "";
+
+            if (cs.AdvancementClass == SkillAdvancementClass.Untrained)
             {
-                case HeritageGroup.Aluvian:
-                case HeritageGroup.Gharundim:
-                case HeritageGroup.Sho:
-                case HeritageGroup.Viamontian:
-                    AugmentationJackOfAllTrades = 1;
+                if (cs.Ranks == 0 && cs.ExperienceSpent == 0)
+                    return false;
+            }
+
+            // salvage / tinkering skills specialized via augmentations
+            // cannot be untrained or unspecialized
+            bool specAug = false;
+
+            switch (cs.Skill)
+            {
+                case Skill.ArmorTinkering:
+                    specAug = AugmentationSpecializeArmorTinkering > 0;
                     break;
 
-                case HeritageGroup.Shadowbound:
-                case HeritageGroup.Penumbraen:
-                    AugmentationCriticalExpertise = 1;
+                case Skill.ItemTinkering:
+                    specAug = AugmentationSpecializeItemTinkering > 0;
                     break;
 
-                case HeritageGroup.Gearknight:
-                    AugmentationDamageReduction = 1;
+                case Skill.MagicItemTinkering:
+                    specAug = AugmentationSpecializeMagicItemTinkering > 0;
                     break;
 
-                case HeritageGroup.Undead:
-                    AugmentationCriticalDefense = 1;
+                case Skill.WeaponTinkering:
+                    specAug = AugmentationSpecializeWeaponTinkering > 0;
                     break;
 
-                case HeritageGroup.Empyrean:
-                    AugmentationInfusedLifeMagic = 1;
-                    break;
-
-                case HeritageGroup.Tumerok:
-                    AugmentationCriticalPower = 1;
-                    break;
-
-                case HeritageGroup.Lugian:
-                    AugmentationIncreasedCarryingCapacity = 1;
-                    break;
-
-                case HeritageGroup.Olthoi:
-                case HeritageGroup.OlthoiAcid:
+                case Skill.Salvaging:
+                    specAug = AugmentationSpecializeSalvaging > 0;
                     break;
             }
+
+            if (specAug)
+                return false;
+
+            if (cs.AdvancementClass == SkillAdvancementClass.Trained || cs.AdvancementClass == SkillAdvancementClass.Specialized)
+            {
+                if (cs.AdvancementClass == SkillAdvancementClass.Specialized)
+                {
+                    typeOfSkill = cs.AdvancementClass.ToString().ToLower() + " ";
+                    skillRemoved = true;
+                    cs.AdvancementClass = SkillAdvancementClass.Trained;
+                    cs.InitLevel -= 5;
+                    AvailableSkillCredits += skill.UpgradeCostFromTrainedToSpecialized;
+                }
+
+                // temple untraining heritage skills:
+                // heritage skills cannot be untrained, but skill XP can be recovered
+                if (skillUntrainable)
+                {
+                    typeOfSkill = cs.AdvancementClass.ToString().ToLower() + " ";
+                    skillRemoved = true;
+                    cs.AdvancementClass = SkillAdvancementClass.Untrained;
+                    cs.InitLevel -= 5;
+                    AvailableSkillCredits += skill.TrainedCost;
+                }
+
+                //Perform refund of XP and credits
+                RefundXP(cs.ExperienceSpent);
+
+                cs.ExperienceSpent = 0;
+                cs.Ranks = 0;
+
+                Session.Network.EnqueueSend(new GameMessagePrivateUpdateSkill(this, cs));
+
+                Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt(this, PropertyInt.AvailableSkillCredits, AvailableSkillCredits ?? 0));
+
+                Session.Network.EnqueueSend(new GameMessageSystemChat($"Your {typeOfSkill}{cs.Skill.ToSentence()} skill has been {(skillRemoved ? "removed" : "reset")}. All the experience {(skillRemoved ? "and skill credits " : "")}that you spent on this skill have been refunded to you.", ChatMessageType.Broadcast));
+
+                return true;
+            }
+
+            return false;
         }
     }
 }

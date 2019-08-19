@@ -4,6 +4,7 @@ using System.Linq;
 using System.Numerics;
 
 using ACE.Entity.Enum;
+using ACE.Server.Entity.Actions;
 using ACE.Server.Physics.Animation;
 using ACE.Server.Physics.Collision;
 using ACE.Server.Physics.Combat;
@@ -103,15 +104,9 @@ namespace ACE.Server.Physics
 
         public CellArray CellArray;
         public ObjectMaint ObjMaint;
-        public static List<PhysicsObj> Players;
-        public bool IsPlayer;
+        public bool IsPlayer => ID >= 0x50000001 && ID <= 0x5FFFFFFF;
 
         public static readonly int UpdateTimeLength = 9;
-
-        static PhysicsObj()
-        {
-            Players = new List<PhysicsObj>();
-        }
 
         public PhysicsObj()
         {
@@ -234,7 +229,7 @@ namespace ACE.Server.Physics
                 return ObjCell.GetVisible(position.ObjCellID);
             }
 
-            var visibleCell = (Common.EnvCell)ObjCell.GetVisible(position.ObjCellID);
+            var visibleCell = (EnvCell)ObjCell.GetVisible(position.ObjCellID);
             if (visibleCell == null) return null;
 
             var point = position.LocalToGlobal(low_pt);
@@ -479,7 +474,7 @@ namespace ACE.Server.Physics
         {
             if ((Position.ObjCellID & 0xFFFF) < 0x100) return 100.0f;
 
-            return Players.Contains(this) ? 25.0f : 20.0f;
+            return IsPlayer ? 25.0f : 20.0f;
         }
 
         public BBox GetBoundingBox()
@@ -1082,14 +1077,6 @@ namespace ACE.Server.Physics
             return result;
         }
 
-        public void SetPlayer()
-        {
-            if (Players.Contains(this))
-                Players.Add(this);
-
-            IsPlayer = true;
-        }
-
         public SetPositionError SetPosition(SetPosition setPos)
         {
             var transition = Transition.MakeTransition();
@@ -1127,6 +1114,9 @@ namespace ACE.Server.Physics
                 return true;
             }
 
+            // modified: maintain consistency for Position.Frame in change_cell
+            set_frame(curPos.Frame);
+
             if (transitCell.Equals(CurCell))
             {
                 Position.ObjCellID = curPos.ObjCellID;
@@ -1148,7 +1138,7 @@ namespace ACE.Server.Physics
                 change_cell(transitCell);
             }
 
-            set_frame(curPos.Frame);
+            //set_frame(curPos.Frame);
 
             var collisions = transition.CollisionInfo;
 
@@ -1247,12 +1237,17 @@ namespace ACE.Server.Physics
 
         public SetPositionError SetPositionInternal(SetPosition setPos, Transition transition)
         {
+            var wo = WeenieObj.WorldObject;
+
+            if (wo == null)
+                return SetPositionError.GeneralFailure;
+
             //if (setPos.Flags.HasFlag(SetPositionFlags.RandomScatter))
             //return SetScatterPositionInternal(setPos, transition);
-            if (WeenieObj.WorldObject.ScatterPos != null)
+            if (wo.ScatterPos != null)
             {
-                WeenieObj.WorldObject.ScatterPos.Flags |= setPos.Flags;
-                return SetScatterPositionInternal(WeenieObj.WorldObject.ScatterPos, transition);
+                wo.ScatterPos.Flags |= setPos.Flags;
+                return SetScatterPositionInternal(wo.ScatterPos, transition);
             }
 
             // frame ref?
@@ -1577,6 +1572,12 @@ namespace ACE.Server.Physics
                         newPos.Frame.set_vector_heading(Vector3.Normalize(Velocity));
                 }
 
+                if (GetBlockDist(Position, newPos) > 1)
+                {
+                    Console.WriteLine($"WARNING: failed transition for {Name} from {Position} to {newPos}\n");
+                    return;
+                }
+
                 var transit = transition(Position, newPos, false);
 
                 if (transit != null)
@@ -1618,10 +1619,40 @@ namespace ACE.Server.Physics
             if (ScriptManager != null) ScriptManager.UpdateScripts();
         }
 
-        public void UpdateObjectInternalServer(double quantum)
+        public static int GetBlockDist(Position a, Position b)
+        {
+            // protection, figure out FastTeleport state
+            if (a == null || b == null)
+                return 0;
+
+            return GetBlockDist(a.ObjCellID, b.ObjCellID);
+        }
+
+        public static int GetBlockDist(uint a, uint b)
+        {
+            var lbx_a = a >> 24;
+            var lby_a = (a >> 16) & 0xFF;
+
+            var lbx_b = b >> 24;
+            var lby_b = (b >> 16) & 0xFF;
+
+            var dx = (int)Math.Abs((int)lbx_a - lbx_b);
+            var dy = (int)Math.Abs((int)lby_a - lby_b);
+
+            return Math.Max(dx, dy);
+        }
+
+        public bool UpdateObjectInternalServer(double quantum)
         {
             //var offsetFrame = new AFrame();
             //UpdatePhysicsInternal((float)quantum, ref offsetFrame);
+            if (GetBlockDist(Position, RequestPos) > 1)
+            {
+                Console.WriteLine($"WARNING: failed transition for {Name} from {Position} to {RequestPos}\n");
+                return false;
+            }
+
+            var requestCell = RequestPos.ObjCellID;
 
             var transit = transition(Position, RequestPos, false);
             if (transit != null)
@@ -1643,6 +1674,8 @@ namespace ACE.Server.Physics
             if (ParticleManager != null) ParticleManager.UpdateParticles();
 
             if (ScriptManager != null) ScriptManager.UpdateScripts();
+
+            return requestCell >> 16 != 0x18A || CurCell?.ID >> 16 == requestCell >> 16;
         }
 
         public void UpdateAnimationInternal(double quantum)
@@ -2151,13 +2184,63 @@ namespace ACE.Server.Physics
             ParticleManager = null;
         }
 
+        /// <summary>
+        /// This is to mitigate possible decal crashes w/ CO messages being sent
+        /// for objects when the client landblock is very early in the loading state
+        /// </summary>
+        public static TimeSpan TeleportCreateObjectDelay = TimeSpan.FromSeconds(1);
+
         public void enqueue_objs(IEnumerable<PhysicsObj> newlyVisible)
         {
-            var player = WeenieObj.WorldObject as Player;
-            if (player == null) return;
+            if (!IsPlayer || !(WeenieObj.WorldObject is Player player))
+                return;
 
-            foreach (var obj in newlyVisible)
-                player.TrackObject(obj.WeenieObj.WorldObject);
+            if (DateTime.UtcNow - player.LastTeleportTime < TeleportCreateObjectDelay)
+            {
+                var actionChain = new ActionChain();
+                actionChain.AddDelaySeconds(TeleportCreateObjectDelay.TotalSeconds);
+                actionChain.AddAction(player, () =>
+                {
+                    foreach (var obj in newlyVisible)
+                    {
+                        var wo = obj.WeenieObj.WorldObject;
+                        if (wo != null)
+                            player.TrackObject(wo, true);
+                    }
+                });
+                actionChain.EnqueueChain();
+            }
+            else
+            {
+                foreach (var obj in newlyVisible)
+                {
+                    var wo = obj.WeenieObj.WorldObject;
+                    if (wo != null)
+                        player.TrackObject(wo);
+                }
+            }
+        }
+
+        public void enqueue_obj(PhysicsObj newlyVisible)
+        {
+            if (!IsPlayer || !(WeenieObj.WorldObject is Player player))
+                return;
+
+            var wo = newlyVisible.WeenieObj.WorldObject;
+            if (wo == null)
+                return;
+
+            if (DateTime.UtcNow - player.LastTeleportTime < TeleportCreateObjectDelay)
+            {
+                var actionChain = new ActionChain();
+                actionChain.AddDelaySeconds(TeleportCreateObjectDelay.TotalSeconds);
+                actionChain.AddAction(player, () => player.TrackObject(wo, true));
+                actionChain.EnqueueChain();
+            }
+            else
+            {
+                player.TrackObject(wo);
+            }
         }
 
         public void enter_cell(ObjCell newCell)
@@ -2168,7 +2251,7 @@ namespace ACE.Server.Physics
                 child.enter_cell(newCell);
 
             CurCell = newCell;
-            Position.ObjCellID = newCell.ID;
+            Position.ObjCellID = newCell.ID;        // warning: Position will be in an inconsistent state here, until set_frame() is run!
             if (PartArray != null && !State.HasFlag(PhysicsState.ParticleEmitter))
                 PartArray.SetCellID(newCell.ID);
 
@@ -2182,30 +2265,48 @@ namespace ACE.Server.Physics
 
         public void enter_cell_server(ObjCell newCell)
         {
+            //Console.WriteLine($"{Name}.enter_cell_server({newCell.ID:X8})");
+
             enter_cell(newCell);
             RequestPos.ObjCellID = newCell.ID;
 
+            // sync location for initial CO
+            if (entering_world)
+                WeenieObj.WorldObject.SyncLocation();
+
+            // handle self
             if (IsPlayer)
             {
-                // handle object visibility
                 var newlyVisible = handle_visible_cells();
                 enqueue_objs(newlyVisible);
+            }
+            else
+            {
+                handle_visible_cells_non_player();
+            }
 
-                // handle object visibility for nearby players
-                foreach (var player in ObjMaint.ObjectTable.Values.Where(i => i.IsPlayer))
-                {
-                    newlyVisible = player.handle_visible_cells();
-                    player.enqueue_objs(newlyVisible);
+            // handle known players
+            foreach (var player in ObjMaint.KnownPlayers.Values)
+            {
+                var added = player.handle_visible_obj(this);
 
-                    player.ObjMaint.AddVoyeur(this);
-                }
+                if (added)
+                    player.enqueue_obj(this);
             }
         }
 
+        public bool entering_world;
+
         public bool enter_world(Position pos)
         {
+            entering_world = true;
+
             store_position(pos);
-            return enter_world(true);
+            bool slide = ProjectileTarget == null || WeenieObj.WorldObject is SpellProjectile;
+            var result = enter_world(slide);
+
+            entering_world = false;
+            return result;
         }
 
         public bool enter_world(bool slide)
@@ -2521,8 +2622,8 @@ namespace ACE.Server.Physics
                 //Console.WriteLine(visibleObject.Name);
 
             // get the difference between current and previous visible
-            //var newlyVisible = visibleObjects.Except(ObjMaint.VisibleObjectTable.Values).ToList();
-            var newlyOccluded = ObjMaint.VisibleObjectTable.Values.Except(visibleObjects).ToList();
+            //var newlyVisible = visibleObjects.Except(ObjMaint.VisibleObjects.Values).ToList();
+            var newlyOccluded = ObjMaint.VisibleObjects.Values.Except(visibleObjects).ToList();
             //Console.WriteLine("Newly visible objects: " + newlyVisible.Count);
             //Console.WriteLine("Newly occluded objects: " + newlyOccluded.Count);
             //foreach (var obj in newlyOccluded)
@@ -2546,6 +2647,70 @@ namespace ACE.Server.Physics
             ObjMaint.AddObjectsToBeDestroyed(newlyOccluded);
 
             return createObjs;
+        }
+
+        public void handle_visible_cells_non_player()
+        {
+            if (WeenieObj.IsMonster)
+            {
+                // players and combat pets
+                var visibleTargets = ObjMaint.GetVisibleObjects(CurCell, ObjectMaint.VisibleObjectType.AttackTargets);
+
+                var newTargets = ObjMaint.AddVisibleTargets(visibleTargets);
+            }
+            else
+            {
+                // everything except monsters
+                // usually these are server objects whose position never changes
+                var knownPlayers = ObjectMaint.InitialClamp ? ObjMaint.GetVisibleObjectsDist(CurCell, ObjectMaint.VisibleObjectType.Players)
+                    : ObjMaint.GetVisibleObjects(CurCell, ObjectMaint.VisibleObjectType.Players);
+
+                ObjMaint.AddKnownPlayers(knownPlayers);
+            }
+
+            if (WeenieObj.IsCombatPet)
+            {
+                var visibleMonsters = ObjMaint.GetVisibleObjects(CurCell, ObjectMaint.VisibleObjectType.AttackTargets);
+
+                var newTargets = ObjMaint.AddVisibleTargets(visibleMonsters);
+            }
+        }
+
+        public bool handle_visible_obj(PhysicsObj obj)
+        {
+            if (CurCell == null || obj.CurCell == null)
+            {
+                if (CurCell == null)
+                    log.Error($"{Name}.handle_visible_obj({obj.Name}): CurCell null");
+                else
+                    log.Error($"{Name}.handle_visible_obj({obj.Name}): obj.CurCell null");
+
+                return false;
+            }
+
+            var isVisible = CurCell.IsVisible(obj.CurCell);
+
+            if (isVisible)
+            {
+                var newlyVisible = ObjMaint.AddVisibleObject(obj);
+
+                if (newlyVisible)
+                {
+                    ObjMaint.AddKnownObject(obj);
+                    ObjMaint.RemoveObjectToBeDestroyed(obj);
+                }
+
+                return newlyVisible;
+            }
+            else
+            {
+                var newlyOccluded = ObjMaint.VisibleObjects.ContainsKey(obj.ID);
+
+                if (newlyOccluded)
+                    ObjMaint.AddObjectToBeDestroyed(obj);
+
+                return false;
+            }
         }
 
         public bool is_completely_visible()
@@ -3906,14 +4071,16 @@ namespace ACE.Server.Physics
                 Console.WriteLine($"{(MotionCommand)motion.Motion}");
         }
 
-        public void update_object_server(bool forcePos = true)
+        public bool update_object_server(bool forcePos = true)
         {
             var deltaTime = PhysicsTimer.CurrentTime - UpdateTime;
 
-            if (!WeenieObj.WorldObject.Teleporting)
-                UpdateObjectInternalServer(deltaTime);
+            var wo = WeenieObj.WorldObject;
+            var success = true;
+            if (wo != null && !wo.Teleporting)
+                success = UpdateObjectInternalServer(deltaTime);
 
-            if (forcePos)
+            if (forcePos && success)
                 set_current_pos(RequestPos);
 
             // temp for players
@@ -3921,6 +4088,8 @@ namespace ACE.Server.Physics
                 CachedVelocity = Vector3.Zero;
 
             UpdateTime = PhysicsTimer.CurrentTime;
+
+            return success;
         }
 
         public void update_position()
@@ -3947,11 +4116,6 @@ namespace ACE.Server.Physics
             }
             else
                 UpdateTime = PhysicsTimer.CurrentTime;
-        }
-
-        public void get_voyeurs()
-        {
-            ObjMaint.get_voyeurs();
         }
 
         public void add_moveto_listener(Action<WeenieError> listener)
@@ -3998,6 +4162,11 @@ namespace ACE.Server.Physics
         public override int GetHashCode()
         {
             return ID.GetHashCode();
+        }
+
+        public override string ToString()
+        {
+            return $"{Name} ({ID:X8})";
         }
     }
 }

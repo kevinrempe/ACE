@@ -385,6 +385,12 @@ namespace ACE.Server.Physics.Common
                     var staticObj = PhysicsObj.makeObject(StaticObjectIDs[i], 0, false);
                     staticObj.DatObject = true;
                     staticObj.add_obj_to_cell(this, StaticObjectFrames[i]);
+                    if (staticObj.CurCell == null)
+                    {
+                        //Console.WriteLine($"EnvCell {ID:X8}: failed to add {staticObj.ID:X8}");
+                        staticObj.DestroyObject();
+                        continue;
+                    }
 
                     StaticObjects.Add(staticObj);
                 }
@@ -428,6 +434,21 @@ namespace ACE.Server.Physics.Common
         public override int GetHashCode()
         {
             return ID.GetHashCode();
+        }
+
+        public bool IsVisibleIndoors(ObjCell cell)
+        {
+            var blockDist = PhysicsObj.GetBlockDist(ID, cell.ID);
+
+            // if landblocks equal
+            if (blockDist == 0)
+            {
+                // check env VisibleCells
+                var cellID = cell.ID & 0xFFFF;
+                if (VisibleCells.ContainsKey(cellID))
+                    return true;
+            }
+            return SeenOutside && blockDist <= 1;
         }
     }
 }

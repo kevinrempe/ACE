@@ -3,6 +3,7 @@ using System.Linq;
 
 using ACE.Entity.Enum;
 using ACE.Entity.Enum.Properties;
+using ACE.Server.Factories;
 using ACE.Server.Entity.Actions;
 using ACE.Server.Network.GameMessages.Messages;
 
@@ -37,6 +38,12 @@ namespace ACE.Server.WorldObjects
                 // In retail, this is sent every 7 seconds. If you adjust ageUpdateInterval from 7, you'll need to re-add logic to send this every 7s (if you want to match retail)
                 Session.Network.EnqueueSend(new GameMessagePrivateUpdatePropertyInt(this, PropertyInt.Age, Age ?? 1));
             }
+
+            if (FellowVitalUpdate && Fellowship != null)
+            {
+                Fellowship.OnVitalUpdate(this);
+                FellowVitalUpdate = false;
+            }
         }
 
         /// <summary>
@@ -54,14 +61,45 @@ namespace ACE.Server.WorldObjects
 
             PK_DeathTick();
 
+            GagsTick();
+
+            PhysicsObj.ObjMaint.DestroyObjects();
+
             // Check if we're due for our periodic SavePlayer
             if (LastRequestedDatabaseSave == DateTime.MinValue)
                 LastRequestedDatabaseSave = DateTime.UtcNow;
 
-            if (LastRequestedDatabaseSave + PlayerSaveInterval <= DateTime.UtcNow)
+            if (LastRequestedDatabaseSave.AddSeconds(PlayerSaveIntervalSecs) <= DateTime.UtcNow)
                 SavePlayerToDatabase();
 
             base.Heartbeat(currentUnixTime);
+        }
+
+        private bool gagNoticeSent = false;
+
+        public void GagsTick()
+        {
+            if (IsGagged)
+            {
+                if (!gagNoticeSent)
+                {
+                    SendGagNotice();
+                    gagNoticeSent = true;
+                }
+
+                // check for gag expiration, if expired, remove gag.
+                GagDuration -= CachedHeartbeatInterval;
+
+                if (GagDuration <= 0)
+                {
+                    IsGagged = false;
+                    GagTimestamp = 0;
+                    GagDuration = 0;
+                    SaveBiotaToDatabase();
+                    SendUngagNotice();
+                    gagNoticeSent = false;
+                }
+            }
         }
 
         /// <summary>
@@ -82,7 +120,7 @@ namespace ACE.Server.WorldObjects
 
             var EquippedManaConsumers = EquippedObjects.Where(k =>
                 (k.Value.IsAffecting ?? false) &&
-                k.Value.ManaRate.HasValue &&
+                //k.Value.ManaRate.HasValue &&
                 k.Value.ItemMaxMana.HasValue &&
                 k.Value.ItemCurMana.HasValue &&
                 k.Value.ItemCurMana.Value > 0).ToList();
@@ -90,6 +128,18 @@ namespace ACE.Server.WorldObjects
             foreach (var k in EquippedManaConsumers)
             {
                 var item = k.Value;
+
+                // this was a bug in lootgen until 7/11/2019, mostly for clothing/armor/shields
+                // tons of existing items on servers are in this bugged state, where they aren't ticking mana.
+                // this retroactively fixes them when equipped
+                // items such as Impious Staff are excluded from this via IsAffecting
+
+                if (item.ManaRate == null)
+                {
+                    item.ManaRate = LootGenerationFactory.GetManaRate(item);
+                    log.Warn($"{Name}.ManaConsumersTick(): {k.Value.Name} ({k.Value.Guid}) fixed missing ManaRate");
+                }
+
                 var rate = item.ManaRate.Value;
 
                 if (LumAugItemManaUsage != 0)

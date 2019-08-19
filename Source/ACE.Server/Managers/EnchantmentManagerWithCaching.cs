@@ -13,6 +13,19 @@ namespace ACE.Server.Managers
 {
     public class EnchantmentManagerWithCaching : EnchantmentManager
     {
+        private bool? hasEnchantments;
+
+        public override bool HasEnchantments
+        {
+            get
+            {
+                if (hasEnchantments == null)
+                    hasEnchantments = base.HasEnchantments;
+
+                return hasEnchantments.Value;
+            }
+        }
+
         /// <summary>
         /// Constructs a new EnchantmentManager for a WorldObject
         /// </summary>
@@ -23,9 +36,9 @@ namespace ACE.Server.Managers
         /// <summary>
         /// Add/update an enchantment in this object's registry
         /// </summary>
-        public override AddEnchantmentResult Add(Spell spell, WorldObject caster)
+        public override AddEnchantmentResult Add(Spell spell, WorldObject caster, bool equip = false)
         {
-            var result = base.Add(spell, caster);
+            var result = base.Add(spell, caster, equip);
 
             ClearCache();
 
@@ -103,8 +116,12 @@ namespace ACE.Server.Managers
 
         private void ClearCache()
         {
+            hasEnchantments = null;
+
             attributeModCache.Clear();
-            vitalModCache.Clear();
+            vitalModAdditiveCache.Clear();
+            vitalModMultiplierCache.Clear();
+
             skillModCache.Clear();
 
             bodyArmorModCache = null;
@@ -113,8 +130,8 @@ namespace ACE.Server.Managers
             vulnerabilityResistanceModCache.Clear();
             regenerationModCache.Clear();
 
+            damageBonusCache = null;
             damageModCache = null;
-            damageModifierCache = null;
             attackModCache = null;
             weaponSpeedModCache = null;
             defenseModCache = null;
@@ -124,6 +141,8 @@ namespace ACE.Server.Managers
             armorModCache = null;
             armorModVsTypeModCache.Clear();
             ratingCache.Clear();
+            xpModCache = null;
+            resistLockpickCache = null;
         }
 
 
@@ -144,19 +163,35 @@ namespace ACE.Server.Managers
             return value;
         }
 
-        private readonly Dictionary<CreatureVital, float> vitalModCache = new Dictionary<CreatureVital, float>();
+        private readonly Dictionary<CreatureVital, float> vitalModAdditiveCache = new Dictionary<CreatureVital, float>();
+        private readonly Dictionary<CreatureVital, float> vitalModMultiplierCache = new Dictionary<CreatureVital, float>();
 
         /// <summary>
-        /// Gets the direct modifiers to a vital / secondary attribute
+        /// Gets the additive modifiers to a vital / secondary attribute
         /// </summary>
-        public override float GetVitalMod(CreatureVital vital)
+        public override float GetVitalMod_Additives(CreatureVital vital)
         {
-            if (vitalModCache.TryGetValue(vital, out var value))
+            if (vitalModAdditiveCache.TryGetValue(vital, out var value))
                 return value;
 
-            value = base.GetVitalMod(vital);
+            value = base.GetVitalMod_Additives(vital);
 
-            vitalModCache[vital] = value;
+            vitalModAdditiveCache[vital] = value;
+
+            return value;
+        }
+
+        /// <summary>
+        /// Gets the multiplicative modifiers to a vital / secondary attribute
+        /// </summary>
+        public override float GetVitalMod_Multiplier(CreatureVital vital)
+        {
+            if (vitalModMultiplierCache.TryGetValue(vital, out var value))
+                return value;
+
+            value = base.GetVitalMod_Multiplier(vital);
+
+            vitalModMultiplierCache[vital] = value;
 
             return value;
         }
@@ -264,12 +299,27 @@ namespace ACE.Server.Managers
         }
 
 
-        private int? damageModCache;
+        private int? damageBonusCache;
 
         /// <summary>
         /// Returns the weapon damage modifier, ie. Blood Drinker
         /// </summary>
-        public override int GetDamageMod()
+        public override int GetDamageBonus()
+        {
+            if (damageBonusCache.HasValue)
+                return damageBonusCache.Value;
+
+            damageBonusCache = base.GetDamageBonus();
+
+            return damageBonusCache.Value;
+        }
+
+        private float? damageModCache;
+
+        /// <summary>
+        /// Returns the DamageMod for bow / crossbow
+        /// </summary>
+        public override float GetDamageMod()
         {
             if (damageModCache.HasValue)
                 return damageModCache.Value;
@@ -277,21 +327,6 @@ namespace ACE.Server.Managers
             damageModCache = base.GetDamageMod();
 
             return damageModCache.Value;
-        }
-
-        private float? damageModifierCache;
-
-        /// <summary>
-        /// Returns the DamageMod for bow / crossbow
-        /// </summary>
-        public override float GetDamageModifier()
-        {
-            if (damageModifierCache.HasValue)
-                return damageModifierCache.Value;
-
-            damageModifierCache = base.GetDamageModifier();
-
-            return damageModifierCache.Value;
         }
 
         private float? attackModCache;
@@ -417,6 +452,18 @@ namespace ACE.Server.Managers
             return value;
         }
 
+        private int? resistLockpickCache;
+
+        public override int GetResistLockpick()
+        {
+            if (resistLockpickCache.HasValue)
+                return resistLockpickCache.Value;
+
+            resistLockpickCache = base.GetResistLockpick();
+
+            return resistLockpickCache.Value;
+        }
+
         private readonly Dictionary<PropertyInt, int> ratingCache = new Dictionary<PropertyInt, int>();
 
         public override int GetRating(PropertyInt property)
@@ -429,6 +476,26 @@ namespace ACE.Server.Managers
             ratingCache[property] = value;
 
             return value;
+        }
+
+        private float? xpModCache;
+
+        public override float GetXPMod()
+        {
+            if (xpModCache == null)
+                xpModCache = base.GetXPMod();
+
+            return xpModCache.Value;
+        }
+
+        public override bool StartCooldown(WorldObject item)
+        {
+            var result = base.StartCooldown(item);
+
+            if (result)
+                ClearCache();
+
+            return result;
         }
     }
 }

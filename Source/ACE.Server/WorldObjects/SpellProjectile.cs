@@ -1,4 +1,6 @@
 using System;
+using System.Numerics;
+
 using ACE.Database.Models.Shard;
 using ACE.Database.Models.World;
 using ACE.Entity;
@@ -6,7 +8,6 @@ using ACE.Entity.Enum;
 using ACE.Entity.Enum.Properties;
 using ACE.Server.Entity;
 using ACE.Server.Entity.Actions;
-using ACE.Server.Managers;
 using ACE.Server.Network.GameEvent.Events;
 using ACE.Server.Network.GameMessages.Messages;
 using ACE.Server.WorldObjects.Entity;
@@ -85,14 +86,26 @@ namespace ACE.Server.WorldObjects
                 ObjScale = null;
 
             if (SpellType == ProjectileSpellType.Ring)
-                ScriptedCollision = false;
+            {
+                if (spellId == 3818)
+                {
+                    PhysicsObj.DefaultScript = ACE.Entity.Enum.PlayScript.Explode;
+                    PhysicsObj.DefaultScriptIntensity = 1.0f;
+                    ScriptedCollision = true;
+                }
+                else
+                {
+                    ScriptedCollision = false;
+                }
+            }
+                
 
             // Whirling Blade spells get omega values and "align path" turned off which
             // creates the nice swirling animation
             if (WeenieClassId == 1636 || WeenieClassId == 7268 || WeenieClassId == 20979)
             {
                 AlignPath = false;
-                Omega = new AceVector3(12.56637f, 0f, 0f);
+                Omega = new Vector3(12.56637f, 0, 0);
             }
         }
 
@@ -120,7 +133,7 @@ namespace ACE.Server.WorldObjects
             {
                 return ProjectileSpellType.Streak;
             }
-            else if (spell.Wcid >= 7269 && spell.Wcid <= 7275 || spell.Wcid == 43233 || spellID == 6320)
+            else if (spell.Wcid >= 7269 && spell.Wcid <= 7275 || spell.Wcid == 43233 || spellID == 6320 || spellID == 3818)
             {
                 return ProjectileSpellType.Ring;
             }
@@ -128,7 +141,7 @@ namespace ACE.Server.WorldObjects
             {
                 return ProjectileSpellType.Wall;
             }
-            else if ((spell.Wcid >= 20973 && spell.Wcid <= 20979) || (spellID >= 5362 && spellID <= 5369))
+            else if (spell.NonTracking)
             {
                 return ProjectileSpellType.Arc;
             }
@@ -165,7 +178,7 @@ namespace ACE.Server.WorldObjects
             }
             if (spellType == ProjectileSpellType.Ring)
             {
-                if (Spell.Level == 6)
+                if (Spell.Level == 6 || Spell.Id == 3818)
                     return 0.4f;
                 if (Spell.Level == 7)
                     return 1.0f;
@@ -269,7 +282,8 @@ namespace ACE.Server.WorldObjects
             }
 
             var critical = false;
-            var damage = CalculateDamage(ProjectileSource, target, ref critical);
+            var critDefended = false;
+            var damage = CalculateDamage(ProjectileSource, target, ref critical, ref critDefended);
 
             // null damage -> target resisted; damage of -1 -> target already dead
             if (damage != null && damage != -1)
@@ -288,7 +302,7 @@ namespace ACE.Server.WorldObjects
                 }
                 else
                 {
-                    DamageTarget(target, damage, critical);
+                    DamageTarget(target, damage, critical, critDefended);
                 }
 
                 if (player != null)
@@ -310,9 +324,8 @@ namespace ACE.Server.WorldObjects
         /// Calculates the damage for a spell projectile
         /// Used by war magic, void magic, and life magic projectiles
         /// </summary>
-        public double? CalculateDamage(WorldObject _source, Creature target, ref bool criticalHit)
+        public double? CalculateDamage(WorldObject source, Creature target, ref bool criticalHit, ref bool critDefended)
         {
-            var source = _source as Creature;
             var sourcePlayer = source as Player;
             var targetPlayer = target as Player;
 
@@ -326,6 +339,9 @@ namespace ACE.Server.WorldObjects
             // check lifestone protection
             if (targetPlayer != null && targetPlayer.UnderLifestoneProtection)
             {
+                if (sourcePlayer != null)
+                    sourcePlayer.Session.Network.EnqueueSend(new GameMessageSystemChat($"The Lifestone's magic protects {targetPlayer.Name} from the attack!", ChatMessageType.Magic));
+
                 targetPlayer.HandleLifestoneProtection();
                 return null;
             }
@@ -344,20 +360,19 @@ namespace ACE.Server.WorldObjects
                 attackSkill = sourceCreature.GetCreatureSkill(Spell.School);
 
             // critical hit
-            var critical = GetWeaponMagicCritFrequencyModifier(source, attackSkill, target);
+            var critical = GetWeaponMagicCritFrequencyModifier(sourceCreature, attackSkill, target);
             if (ThreadSafeRandom.Next(0.0f, 1.0f) < critical)
             {
-                var criticalDefended = false;
                 if (targetPlayer != null && targetPlayer.AugmentationCriticalDefense > 0)
                 {
                     var criticalDefenseMod = sourcePlayer != null ? 0.05f : 0.25f;
                     var criticalDefenseChance = targetPlayer.AugmentationCriticalDefense * criticalDefenseMod;
 
                     if (criticalDefenseChance > ThreadSafeRandom.Next(0.0f, 1.0f))
-                        criticalDefended = true;
+                        critDefended = true;
                 }
 
-                if (!criticalDefended)
+                if (!critDefended)
                     criticalHit = true;
             }
 
@@ -365,10 +380,13 @@ namespace ACE.Server.WorldObjects
 
             bool isPVP = sourcePlayer != null && targetPlayer != null;
 
-            var elementalDmgBonus = GetCasterElementalDamageModifier(source, target, Spell.DamageType);
+            if (isPVP && Spell.IsHarmful)
+                Player.UpdatePKTimers(sourcePlayer, targetPlayer);
+
+            var elementalDmgBonus = GetCasterElementalDamageModifier(sourceCreature, target, Spell.DamageType);
 
             // Possible 2x + damage bonus for the slayer property
-            var slayerBonus = GetWeaponCreatureSlayerModifier(source, target);
+            var slayerBonus = GetWeaponCreatureSlayerModifier(sourceCreature, target);
 
             // life magic projectiles: ie., martyr's hecatomb
             if (Spell.School == MagicSchool.LifeMagic)
@@ -378,12 +396,12 @@ namespace ACE.Server.WorldObjects
                 // could life magic projectiles crit?
                 // if so, did they use the same 1.5x formula as war magic, instead of 2.0x?
                 if (criticalHit)
-                    damageBonus = lifeMagicDamage * 0.5f * GetWeaponCritDamageMod(source, attackSkill, target);
+                    damageBonus = lifeMagicDamage * 0.5f * GetWeaponCritDamageMod(sourceCreature, attackSkill, target);
 
                 finalDamage = (lifeMagicDamage + damageBonus) * elementalDmgBonus * slayerBonus * shieldMod;
                 return finalDamage;
             }
-            // war magic projectiles (and void currently)
+            // war/void magic projectiles
             else
             {
                 if (criticalHit)
@@ -393,7 +411,7 @@ namespace ACE.Server.WorldObjects
                     else   // PvE: 50% of the MAX damage added to normal damage roll
                         damageBonus = Spell.MaxDamage * 0.5f;
 
-                    var critDamageMod = GetWeaponCritDamageMod(source, attackSkill, target);
+                    var critDamageMod = GetWeaponCritDamageMod(sourceCreature, attackSkill, target);
 
                     damageBonus *= critDamageMod;
                 }
@@ -401,22 +419,28 @@ namespace ACE.Server.WorldObjects
                 /* War Magic skill-based damage bonus
                  * http://acpedia.org/wiki/Announcements_-_2002/08_-_Atonement#Letter_to_the_Players
                  */
-                if (sourcePlayer != null && Spell.School == MagicSchool.WarMagic)
+                if (sourcePlayer != null)
                 {
-                    var warSkill = source.GetCreatureSkill(Spell.School).Current;
-                    if (warSkill > Spell.Power)
+                    // per retail stats, level 8 difficulty is capped to 350 instead of 400
+                    // without this, level 7s have the potential to deal more damage than level 8s
+                    var difficulty = Math.Min(Spell.Power, 350);
+                    var magicSkill = sourcePlayer.GetCreatureSkill(Spell.School).Current;
+
+                    if (magicSkill > difficulty)
                     {
                         // Bonus clamped to a maximum of 50%
-                        var percentageBonus = Math.Clamp((warSkill - Spell.Power) / 100.0f, 0.0f, 0.5f);
+                        //var percentageBonus = Math.Clamp((magicSkill - Spell.Power) / 100.0f, 0.0f, 0.5f);
+                        var percentageBonus = (magicSkill - difficulty) / 1000.0f;
+
                         warSkillBonus = Spell.MinDamage * percentageBonus;
                     }
                 }
                 var baseDamage = ThreadSafeRandom.Next(Spell.MinDamage, Spell.MaxDamage);
 
-                var weaponResistanceMod = GetWeaponResistanceModifier(source, attackSkill, Spell.DamageType);
+                var weaponResistanceMod = GetWeaponResistanceModifier(sourceCreature, attackSkill, Spell.DamageType);
 
                 finalDamage = baseDamage + damageBonus + warSkillBonus;
-                finalDamage *= target.GetResistanceMod(resistanceType, source, weaponResistanceMod)
+                finalDamage *= target.GetResistanceMod(resistanceType, null, weaponResistanceMod)
                     * elementalDmgBonus * slayerBonus * shieldMod;
 
                 return finalDamage;
@@ -477,92 +501,114 @@ namespace ACE.Server.WorldObjects
         /// <summary>
         /// Called for a spell projectile to damage its target
         /// </summary>
-        public void DamageTarget(WorldObject _target, double? damage, bool critical)
+        public void DamageTarget(WorldObject _target, double? damage, bool critical, bool critDefended = false)
         {
             var player = ProjectileSource as Player;
 
             var target = _target as Creature;
             var targetPlayer = _target as Player;
 
+            if (targetPlayer != null && (targetPlayer.Invincible || targetPlayer.IsDead))
+                return;
+
+            uint amount;
+            var percent = 0.0f;
+            var heritageMod = 1.0f;
+            var sneakAttackMod = 1.0f;
+
+            // handle life projectiles for stamina / mana
+            if (Spell.Category == SpellCategory.StaminaLowering)
             {
-                uint amount;
-                var percent = 0.0f;
-                var heritageMod = 1.0f;
-                var sneakAttackMod = 1.0f;
-
-                // handle life projectiles for stamina / mana
-                if (Spell.School == MagicSchool.LifeMagic && (Spell.Name.Contains("Blight") || Spell.Name.Contains("Tenacity")))
+                percent = (float)damage / target.Stamina.MaxValue;
+                amount = (uint)-target.UpdateVitalDelta(target.Stamina, (int)-Math.Round(damage.Value));
+            }
+            else if (Spell.Category == SpellCategory.ManaLowering)
+            {
+                percent = (float)damage / target.Mana.MaxValue;
+                amount = (uint)-target.UpdateVitalDelta(target.Mana, (int)-Math.Round(damage.Value));
+            }
+            else
+            {
+                // for possibly applying sneak attack to magic projectiles,
+                // only do this for health-damaging projectiles?
+                if (player != null)
                 {
-                    if (Spell.Name.Contains("Blight"))
-                    {
-                        percent = (float)damage / targetPlayer.Mana.MaxValue;
-                        amount = (uint)-target.UpdateVitalDelta(target.Mana, (int)-Math.Round(damage.Value));
-                    }
-                    else
-                    {
-                        percent = (float)damage / targetPlayer.Stamina.MaxValue;
-                        amount = (uint)-target.UpdateVitalDelta(target.Stamina, (int)-Math.Round(damage.Value));
-                    }
-                }
-                else
-                {
-                    // for possibly applying sneak attack to magic projectiles,
-                    // only do this for health-damaging projectiles?
-                    if (player != null)
-                    {
-                        // TODO: use target direction vs. projectile position, instead of player position
-                        // could sneak attack be applied to void DoTs?
-                        sneakAttackMod = player.GetSneakAttackMod(target);
-                        //Console.WriteLine("Magic sneak attack:  + sneakAttackMod);
-                        heritageMod = player.GetHeritageBonus(WeaponType.Magic) ? 1.05f : 1.0f;
-                    }
-
-                    // DR / DRR applies for magic too?
-                    var creatureSource = ProjectileSource as Creature;
-                    var damageRating = creatureSource != null ? creatureSource.GetDamageRating() : 0;
-                    var damageRatingMod = Creature.AdditiveCombine(Creature.GetPositiveRatingMod(damageRating), heritageMod, sneakAttackMod);
-                    var damageResistRatingMod = Creature.GetNegativeRatingMod(target.GetDamageResistRating());
-                    damage *= damageRatingMod * damageResistRatingMod;
-
-                    //Console.WriteLine($"Damage rating: " + Creature.ModToRating(damageRatingMod));
-
-                    percent = (float)damage / target.Health.MaxValue;
-                    amount = (uint)-target.UpdateVitalDelta(target.Health, (int)-Math.Round(damage.Value));
-                    target.DamageHistory.Add(ProjectileSource, Spell.DamageType, amount);
-
-                    if (targetPlayer != null && targetPlayer.Fellowship != null)
-                        targetPlayer.Fellowship.OnVitalUpdate(targetPlayer);
+                    // TODO: use target direction vs. projectile position, instead of player position
+                    // could sneak attack be applied to void DoTs?
+                    sneakAttackMod = player.GetSneakAttackMod(target);
+                    //Console.WriteLine("Magic sneak attack:  + sneakAttackMod);
+                    heritageMod = player.GetHeritageBonus(player.GetEquippedWand()) ? 1.05f : 1.0f;
                 }
 
-                amount = (uint)Math.Round(damage.Value);    // full amount for debugging
+                // DR / DRR applies for magic too?
+                var creatureSource = ProjectileSource as Creature;
+                var damageRating = creatureSource != null ? creatureSource.GetDamageRating() : 0;
+                var damageRatingMod = Creature.AdditiveCombine(Creature.GetPositiveRatingMod(damageRating), heritageMod, sneakAttackMod);
+                var damageResistRatingMod = Creature.GetNegativeRatingMod(target.GetDamageResistRating(CombatType.Magic));
+                damage *= damageRatingMod * damageResistRatingMod;
 
-                if (critical)
-                    target.EmoteManager.OnReceiveCritical(player);
+                //Console.WriteLine($"Damage rating: " + Creature.ModToRating(damageRatingMod));
 
-                if (target.IsAlive)
+                percent = (float)damage / target.Health.MaxValue;
+                amount = (uint)-target.UpdateVitalDelta(target.Health, (int)-Math.Round(damage.Value));
+                target.DamageHistory.Add(ProjectileSource, Spell.DamageType, amount);
+
+                //if (targetPlayer != null && targetPlayer.Fellowship != null)
+                    //targetPlayer.Fellowship.OnVitalUpdate(targetPlayer);
+            }
+
+            amount = (uint)Math.Round(damage.Value);    // full amount for debugging
+
+            if (critical)
+                target.EmoteManager.OnReceiveCritical(player);
+
+            if (target.IsAlive)
+            {
+                string verb = null, plural = null;
+                Strings.GetAttackVerb(Spell.DamageType, percent, ref verb, ref plural);
+                var type = Spell.DamageType.GetName().ToLower();
+
+                var critMsg = critical ? "Critical hit! " : "";
+                var sneakMsg = sneakAttackMod > 1.0f ? "Sneak Attack! " : "";
+                if (player != null)
                 {
-                    string verb = null, plural = null;
-                    Strings.GetAttackVerb(Spell.DamageType, percent, ref verb, ref plural);
-                    var type = Spell.DamageType.GetName().ToLower();
+                    var critProt = critDefended ? " Your target's Critical Protection augmentation allows them to avoid your critical hit!" : "";
 
-                    var critMsg = critical ? "Critical hit!  " : "";
-                    var sneakMsg = sneakAttackMod > 1.0f ? "Sneak Attack! " : "";
-                    if (player != null)
+                    var attackerMsg = $"{critMsg}{sneakMsg}You {verb} {target.Name} for {amount} points with {Spell.Name}.{critProt}";
+
+                    // could these crit / sneak attack?
+                    if (Spell.Category == SpellCategory.StaminaLowering || Spell.Category == SpellCategory.ManaLowering)
                     {
-                        var attackerMsg = new GameMessageSystemChat($"{critMsg}{sneakMsg}You {verb} {target.Name} for {amount} points of {type} damage!", ChatMessageType.Magic);
-                        var updateHealth = new GameEventUpdateHealth(player.Session, target.Guid.Full, (float)target.Health.Current / target.Health.MaxValue);
-
-                        player.Session.Network.EnqueueSend(attackerMsg, updateHealth);
+                        var vital = Spell.Category == SpellCategory.StaminaLowering ? "stamina" : "mana";
+                        attackerMsg = $"With {Spell.Name} you drain {amount} points of {vital} from {target.Name}.";
                     }
 
-                    if (targetPlayer != null)
-                        targetPlayer.Session.Network.EnqueueSend(new GameMessageSystemChat($"{critMsg}{sneakMsg}{ProjectileSource.Name} {plural} you for {amount} points of {type} damage!", ChatMessageType.Magic));
+                    if (!player.SquelchManager.Squelches.Contains(target, ChatMessageType.Magic))
+                        player.Session.Network.EnqueueSend(new GameMessageSystemChat(attackerMsg, ChatMessageType.Magic));
+
+                    player.Session.Network.EnqueueSend(new GameEventUpdateHealth(player.Session, target.Guid.Full, (float)target.Health.Current / target.Health.MaxValue));
                 }
-                else
+
+                if (targetPlayer != null)
                 {
-                    target.OnDeath(ProjectileSource, Spell.DamageType, critical);
-                    target.Die();
+                    var critProt = critDefended ? " Your Critical Protection augmentation allows you to avoid a critical hit!" : "";
+
+                    var defenderMsg = $"{critMsg}{sneakMsg}{ProjectileSource.Name} {plural} you for {amount} points with {Spell.Name}.{critProt}";
+
+                    if (Spell.Category == SpellCategory.StaminaLowering || Spell.Category == SpellCategory.ManaLowering)
+                    {
+                        var vital = Spell.Category == SpellCategory.StaminaLowering ? "stamina" : "mana";
+                        defenderMsg = $"{ProjectileSource.Name} casts {Spell.Name} and drains {amount} points of your {vital}.";
+                    }
+
+                    if (!targetPlayer.SquelchManager.Squelches.Contains(ProjectileSource, ChatMessageType.Magic))
+                        targetPlayer.Session.Network.EnqueueSend(new GameMessageSystemChat(defenderMsg, ChatMessageType.Magic));
                 }
+            }
+            else
+            {
+                target.OnDeath(ProjectileSource, Spell.DamageType, critical);
+                target.Die();
             }
         }
 
@@ -585,9 +631,9 @@ namespace ACE.Server.WorldObjects
             PhysicsObj.Position.Frame.Origin = pos;
             PhysicsObj.Position.Frame.Orientation = rotation;
 
-            var velocity = Velocity.Get();
+            var velocity = Velocity;
             //velocity = Vector3.Transform(velocity, Matrix4x4.Transpose(Matrix4x4.CreateFromQuaternion(rotation)));
-            PhysicsObj.Velocity = velocity;
+            PhysicsObj.Velocity = velocity.Value;
             if (target != null)
                 PhysicsObj.ProjectileTarget = target.PhysicsObj;
 

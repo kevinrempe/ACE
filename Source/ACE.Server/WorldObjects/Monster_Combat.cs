@@ -7,6 +7,7 @@ using ACE.DatLoader.FileTypes;
 using ACE.Entity.Enum;
 using ACE.Entity.Enum.Properties;
 using ACE.Server.Entity;
+using ACE.Server.Managers;
 using ACE.Server.Network.GameEvent.Events;
 using ACE.Server.Network.GameMessages.Messages;
 
@@ -48,11 +49,6 @@ namespace ACE.Server.WorldObjects
         public bool IsDead => Health.Current <= 0;
 
         /// <summary>
-        /// The list of combat maneuvers performable by this monster
-        /// </summary>
-        public CombatManeuverTable CombatTable;
-
-        /// <summary>
         /// A list of possible attack heights for this monster,
         /// as determined by the combat maneuvers table
         /// </summary>
@@ -65,7 +61,7 @@ namespace ACE.Server.WorldObjects
                 if (CombatTable == null) return null;
 
                 if (_attackHeights == null)
-                    _attackHeights = CombatTable.CMT.Select(m => (AttackHeight)m.AttackHeight).Distinct().ToList();
+                    _attackHeights = CombatTable.CMT.Select(m => m.AttackHeight).Distinct().ToList();
 
                 return _attackHeights;
             }
@@ -240,7 +236,14 @@ namespace ACE.Server.WorldObjects
             if (weapon != null)
                 return GetDamageType();
             else
-                return (DamageType)attackPart.DType;
+            {
+                var damageType = (DamageType)attackPart.DType;
+
+                if (damageType.IsMultiDamage())
+                    damageType = damageType.SelectDamageType();
+
+                return damageType;
+            }
         }
 
         /// <summary>
@@ -272,24 +275,29 @@ namespace ACE.Server.WorldObjects
         /// </summary>
         public void TakeDamageOverTime_NotifySource(Player source, DamageType damageType, float amount)
         {
-            var iAmount = (uint)Math.Round(amount);
-
-            // damage text notification
-            GameMessageSystemChat text = null;
-
-            if (damageType == DamageType.Nether)
+            if (PropertyManager.GetBool("show_dot_messages").Item)
             {
-                string verb = null, plural = null;
-                var percent = amount / Health.MaxValue;
-                Strings.GetAttackVerb(damageType, percent, ref verb, ref plural);
-                text = new GameMessageSystemChat($"You {verb} {Name} for {iAmount} points of periodic nether damage!", ChatMessageType.Magic);
+                var iAmount = (uint)Math.Round(amount);
+
+                // damage text notification
+                string msg = null;
+                var type = ChatMessageType.CombatSelf;
+
+                if (damageType == DamageType.Nether)
+                {
+                    string verb = null, plural = null;
+                    var percent = amount / Health.MaxValue;
+                    Strings.GetAttackVerb(damageType, percent, ref verb, ref plural);
+                    msg = $"You {verb} {Name} for {iAmount} points of periodic nether damage!";
+                    type = ChatMessageType.Magic;
+                }
+                else
+                    msg = $"You bleed {Name} for {iAmount} points of periodic damage!";
+
+                source.SendMessage(msg, type);
             }
-            else
-                text = new GameMessageSystemChat($"You bleed {Name} for {iAmount} points of periodic damage!", ChatMessageType.CombatSelf);
 
-            var updateHealth = new GameEventUpdateHealth(source.Session, Guid.Full, (float)Health.Current / Health.MaxValue);
-
-            source.Session.Network.EnqueueSend(text, updateHealth);
+            source.Session.Network.EnqueueSend(new GameEventUpdateHealth(source.Session, Guid.Full, (float)Health.Current / Health.MaxValue));
         }
 
         /// <summary>

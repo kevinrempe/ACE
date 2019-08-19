@@ -2,6 +2,7 @@ using System;
 
 using ACE.Common;
 using ACE.Entity;
+using ACE.Entity.Enum;
 using ACE.Entity.Enum.Properties;
 using ACE.Server.Entity.Actions;
 using ACE.Server.Managers;
@@ -24,14 +25,27 @@ namespace ACE.Server.WorldObjects
         /// <summary>
         /// A value of Double.MaxValue indicates that there is no NextGeneratorHeartbeat
         /// </summary>
-        public double NextGeneratorHeartbeatTime;
+        public double NextGeneratorUpdateTime;
+        /// <summary>
+        /// A value of Double.MaxValue indicates that there is no NextGeneratorRegeneration
+        /// </summary>
+        public double NextGeneratorRegenerationTime;
 
         private void InitializeHeartbeats()
         {
             var currentUnixTime = Time.GetUnixTime();
 
-            if (this is Game)
+            if (WeenieType == WeenieType.GamePiece)
                 HeartbeatInterval = 1.0f;
+
+            if (HeartbeatInterval == null)
+                HeartbeatInterval = 5.0f;
+
+            if (RegenerationInterval < 0)
+            {
+                log.Warn($"{Name} ({Guid}).InitializeHeartBeats() - RegenerationInterval {RegenerationInterval}, setting to 0");
+                RegenerationInterval = 0;
+            }
 
             CachedHeartbeatInterval = HeartbeatInterval ?? 0;
 
@@ -50,9 +64,24 @@ namespace ACE.Server.WorldObjects
             cachedRegenerationInterval = RegenerationInterval;
 
             if (IsGenerator)
-                NextGeneratorHeartbeatTime = currentUnixTime; // Generators start right away
+            {
+                NextGeneratorUpdateTime = currentUnixTime; // Generators start right away
+                if (cachedRegenerationInterval == 0)
+                    NextGeneratorRegenerationTime = double.MaxValue;
+            }
             else
-                NextGeneratorHeartbeatTime = double.MaxValue; // Disable future GeneratorHeartBeats
+            {
+                NextGeneratorUpdateTime = double.MaxValue; // Disable future GeneratorHeartBeats
+                NextGeneratorRegenerationTime = double.MaxValue;
+            }
+        }
+
+        /// <summary>
+        /// Should only be used by Landblocks
+        /// </summary>
+        public void ReinitializeHeartbeats()
+        {
+            InitializeHeartbeats();
         }
 
         /// <summary>
@@ -61,23 +90,47 @@ namespace ACE.Server.WorldObjects
         public virtual void Heartbeat(double currentUnixTime)
         {
             if (EnchantmentManager.HasEnchantments)
-                EnchantmentManager.HeartBeat();
+                EnchantmentManager.HeartBeat(CachedHeartbeatInterval);
+
+            if (RemainingLifespan != null)
+            {
+                RemainingLifespan -= (int)CachedHeartbeatInterval;
+
+                if (RemainingLifespan <= 0)
+                    DeleteObject();
+            }
 
             SetProperty(PropertyFloat.HeartbeatTimestamp, currentUnixTime);
             NextHeartbeatTime = currentUnixTime + CachedHeartbeatInterval;
         }
 
         /// <summary>
+        /// Called every 5 seconds for WorldObject base
+        /// </summary>
+        public void GeneratorUpdate(double currentUnixTime)
+        {
+            Generator_Update();
+
+            SetProperty(PropertyFloat.GeneratorUpdateTimestamp, currentUnixTime);
+
+            NextGeneratorUpdateTime = currentUnixTime + 5;
+        }
+
+        /// <summary>
         /// Called every [RegenerationInterval] seconds for WorldObject base
         /// </summary>
-        public void GeneratorHeartbeat(double currentUnixTime)
+        public void GeneratorRegeneration(double currentUnixTime)
         {
-            Generator_HeartBeat();
+            //Console.WriteLine($"{Name}.GeneratorRegeneration({currentUnixTime})");
+
+            Generator_Regeneration();
+
+            SetProperty(PropertyFloat.RegenerationTimestamp, currentUnixTime);
 
             if (cachedRegenerationInterval > 0)
-                NextGeneratorHeartbeatTime = currentUnixTime + cachedRegenerationInterval;
-            else
-                NextGeneratorHeartbeatTime = double.MaxValue;
+                NextGeneratorRegenerationTime = currentUnixTime + cachedRegenerationInterval;
+
+            //Console.WriteLine($"{Name}.NextGeneratorRegenerationTime({NextGeneratorRegenerationTime})");
         }
 
         /// <summary>
@@ -89,7 +142,7 @@ namespace ACE.Server.WorldObjects
         {
             if (CurrentLandblock == null)
             {
-                if (isDestroyed)
+                if (IsDestroyed)
                 {
                     // Item is gone, no more work can be done to it
                 }
@@ -127,7 +180,10 @@ namespace ACE.Server.WorldObjects
                         // Containers enqueue the loading of their inventory from callbacks. It's possible the callback happened before the container was added to the landblock
                     }
                     else
-                        log.WarnFormat("Item 0x{0:X8}:{1} has enqueued an action but is not attached to a landblock.", Guid.Full, Name);
+                    {
+                        if (!(OwnerId.HasValue && OwnerId.Value > 0))
+                            log.WarnFormat("Item 0x{0:X8}:{1} has enqueued an action but is not attached to a landblock.", Guid.Full, Name);
+                    }
 
                     WorldManager.EnqueueAction(action);
                 }
@@ -148,7 +204,7 @@ namespace ACE.Server.WorldObjects
         /// <returns>TRUE if object moves to a different landblock</returns>
         public bool UpdatePlayerPhysics(ACE.Entity.Position newPosition, bool forceUpdate = false)
         {
-            //Console.WriteLine($"UpdatePlayerPhysics: {newPosition.Cell:X8}, {newPosition.Pos}");
+            //Console.WriteLine($"{Name}.UpdatePlayerPhysics({newPosition}, {forceUpdate}, {Teleporting})");
 
             var player = this as Player;
 
@@ -158,10 +214,13 @@ namespace ACE.Server.WorldObjects
             // possible bug: while teleporting, client can still send AutoPos packets from old landblock
             if (Teleporting && !forceUpdate) return false;
 
+            var success = true;
+
             if (PhysicsObj != null)
             {
-                var dist = (newPosition.Pos - PhysicsObj.Position.Frame.Origin).Length();
-                if (dist > PhysicsGlobals.EPSILON)
+                var distSq = Location.SquaredDistanceTo(newPosition);
+
+                if (distSq > PhysicsGlobals.EpsilonSq)
                 {
                     var curCell = LScape.get_landcell(newPosition.Cell);
                     if (curCell != null)
@@ -170,7 +229,7 @@ namespace ACE.Server.WorldObjects
                         //PhysicsObj.change_cell_server(curCell);
 
                         PhysicsObj.set_request_pos(newPosition.Pos, newPosition.Rotation, curCell, Location.LandblockId.Raw);
-                        PhysicsObj.update_object_server();
+                        success = PhysicsObj.update_object_server();
 
                         if (PhysicsObj.CurCell == null)
                             PhysicsObj.CurCell = curCell;
@@ -191,6 +250,8 @@ namespace ACE.Server.WorldObjects
 
             // double update path: landblock physics update -> updateplayerphysics() -> update_object_server() -> Teleport() -> updateplayerphysics() -> return to end of original branch
             if (Teleporting && !forceUpdate) return true;
+
+            if (!success) return false;
 
             var landblockUpdate = Location.Cell >> 16 != newPosition.Cell >> 16;
             Location = newPosition;
@@ -229,7 +290,7 @@ namespace ACE.Server.WorldObjects
             // monsters have separate physics updates
             var creature = this as Creature;
             var monster = creature != null && creature.IsMonster;
-            var pet = this as CombatPet;
+            //var pet = this as CombatPet;
 
             // determine if updates should be run for object
             //var runUpdate = !monster && (isMissile || !PhysicsObj.IsGrounded);
@@ -298,8 +359,7 @@ namespace ACE.Server.WorldObjects
             //Console.WriteLine("Dist: " + dist);
             //Console.WriteLine("Velocity: " + PhysicsObj.Velocity);
 
-            var spellProjectile = this as SpellProjectile;
-            if (spellProjectile != null && spellProjectile.SpellType == SpellProjectile.ProjectileSpellType.Ring)
+            if (this is SpellProjectile spellProjectile && spellProjectile.SpellType == SpellProjectile.ProjectileSpellType.Ring)
             {
                 var dist = spellProjectile.SpawnPos.DistanceTo(Location);
                 var maxRange = spellProjectile.Spell.BaseRangeConstant;
