@@ -46,7 +46,7 @@ namespace ACE.Server.WorldObjects
                 delayChain.AddDelaySeconds(0.001f);     // ensuring this message gets sent after player broadcasts above...
                 delayChain.AddAction(this, () =>
                 {
-                    EnqueueBroadcast(new GameMessageParentEvent(this, ammo, (int)ACE.Entity.Enum.ParentLocation.RightHand, (int)ACE.Entity.Enum.Placement.RightHandCombat));
+                    EnqueueBroadcast(new GameMessageParentEvent(this, ammo, ACE.Entity.Enum.ParentLocation.RightHand, ACE.Entity.Enum.Placement.RightHandCombat));
                 });
                 delayChain.EnqueueChain();
             });
@@ -70,12 +70,14 @@ namespace ACE.Server.WorldObjects
         /// <summary>
         /// Launches a projectile from player to target
         /// </summary>
-        public WorldObject LaunchProjectile(WorldObject ammo, WorldObject target, out float time)
+        public WorldObject LaunchProjectile(WorldObject weapon, WorldObject ammo, WorldObject target, out float time)
         {
             var proj = WorldObjectFactory.CreateNewWorldObject(ammo.WeenieClassId);
 
             proj.ProjectileSource = this;
             proj.ProjectileTarget = target;
+
+            proj.ProjectileLauncher = weapon;
 
             var matchIndoors = Location.Indoors == target.Location.Indoors;
             var origin = matchIndoors ? Location.ToGlobal() : Location.Pos;
@@ -128,7 +130,7 @@ namespace ACE.Server.WorldObjects
             // hide previously held ammo
             EnqueueBroadcast(new GameMessagePickupEvent(ammo));
 
-            if (ammo.StackSize == 1)
+            if (ammo.StackSize == null || ammo.StackSize <= 1)
             {
                 TryUnwieldObjectWithBroadcasting(ammo.Guid, out _, out _);
                 ammo.Destroy();
@@ -222,7 +224,7 @@ namespace ACE.Server.WorldObjects
             //var missileRange = (float)Math.Pow(maxVelocity, 2.0f) * 0.1020408163265306f;
             var missileRange = (float)Math.Pow(maxVelocity, 2.0f) * 0.0682547266398198f;
 
-            var strengthMod = SkillFormula.GetAttributeMod(PropertyAttribute.Strength, (int)Strength.Current);
+            var strengthMod = SkillFormula.GetAttributeMod((int)Strength.Current);
             var maxRange = Math.Min(missileRange * strengthMod, MissileRangeCap);
 
             // any kind of other caps for monsters specifically?
