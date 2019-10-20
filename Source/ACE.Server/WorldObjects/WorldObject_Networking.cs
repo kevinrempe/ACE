@@ -1027,7 +1027,7 @@ namespace ACE.Server.WorldObjects
             if (!excludeSelf && this is Player self)
                 self.EnqueueAction(new ActionEventDelegate(() => delegateAction(self)));
 
-            foreach (var player in PhysicsObj.ObjMaint.KnownPlayers.Values.Select(v => v.WeenieObj.WorldObject).OfType<Player>())
+            foreach (var player in PhysicsObj.ObjMaint.GetKnownPlayersValuesAsPlayer())
             {
                 if (Visibility && !player.Adminvision)
                     continue;
@@ -1118,11 +1118,11 @@ namespace ACE.Server.WorldObjects
         /// </summary>
         public bool PlayersInRange(float range = 96.0f)
         {
-            var isDungeon = CurrentLandblock != null && CurrentLandblock._landblock != null && CurrentLandblock._landblock.IsDungeon;
+            var isDungeon = CurrentLandblock != null && CurrentLandblock.PhysicsLandblock != null && CurrentLandblock.PhysicsLandblock.IsDungeon;
 
             var rangeSquared = range * range;
 
-            foreach (var player in PhysicsObj.ObjMaint.KnownPlayers.Values.Select(v => v.WeenieObj.WorldObject).OfType<Player>())
+            foreach (var player in PhysicsObj.ObjMaint.GetKnownPlayersValuesAsPlayer())
             {
                 if (isDungeon && Location.Landblock != player.Location.Landblock)
                     continue;
@@ -1154,11 +1154,11 @@ namespace ACE.Server.WorldObjects
                 self.Session.Network.EnqueueSend(msg);
             }
 
-            var isDungeon = CurrentLandblock._landblock != null && CurrentLandblock._landblock.IsDungeon;
+            var isDungeon = CurrentLandblock.PhysicsLandblock != null && CurrentLandblock.PhysicsLandblock.IsDungeon;
 
             var rangeSquared = range * range;
 
-            foreach (var player in PhysicsObj.ObjMaint.KnownPlayers.Values.Select(v => v.WeenieObj.WorldObject).OfType<Player>())
+            foreach (var player in PhysicsObj.ObjMaint.GetKnownPlayersValuesAsPlayer())
             {
                 if (self != null && squelchType != null && player.SquelchManager.Squelches.Contains(self, squelchType.Value))
                     continue;
@@ -1195,7 +1195,7 @@ namespace ACE.Server.WorldObjects
                     self.Session.Network.EnqueueSend(msgs);
             }
 
-            var nearbyPlayers = PhysicsObj.ObjMaint.KnownPlayers.Values.Select(v => v.WeenieObj.WorldObject).OfType<Player>().ToList();
+            var nearbyPlayers = PhysicsObj.ObjMaint.GetKnownPlayersValuesAsPlayer();
             foreach (var player in nearbyPlayers)
             {
                 if (Visibility && !player.Adminvision)
@@ -1216,7 +1216,7 @@ namespace ACE.Server.WorldObjects
                     self.Session.Network.EnqueueSend(msgs);
             }
 
-            var nearbyPlayers = PhysicsObj.ObjMaint.KnownPlayers.Values.Select(v => v.WeenieObj.WorldObject as Player).ToList();
+            var nearbyPlayers = PhysicsObj.ObjMaint.GetKnownPlayersValuesAsPlayer();
             foreach (var player in nearbyPlayers.Except(excludePlayers))
             {
                 if (Visibility && !player.Adminvision)
@@ -1233,7 +1233,7 @@ namespace ACE.Server.WorldObjects
         public void NotifyPlayers()
         {
             // send create object network message to visible players
-            foreach (var player in PhysicsObj.ObjMaint.KnownPlayers.Values.Select(i => i.WeenieObj.WorldObject as Player).ToList())
+            foreach (var player in PhysicsObj.ObjMaint.GetKnownPlayersValuesAsPlayer())
                 player.AddTrackedObject(this);
 
             if (this is Creature creature && !(this is Player))
