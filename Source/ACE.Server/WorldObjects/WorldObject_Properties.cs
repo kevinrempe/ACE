@@ -12,6 +12,7 @@ using ACE.Entity.Enum;
 using ACE.Entity.Enum.Properties;
 using ACE.Server.Entity;
 using ACE.Server.Managers;
+using ACE.Server.Network.Structure;
 
 namespace ACE.Server.WorldObjects
 {
@@ -558,13 +559,15 @@ namespace ACE.Server.WorldObjects
             }
         }
 
-
         // ========================================
         // ======== Physics Desc Properties =======
         // ========================================
         // used in CalculatedPhysicsDescriptionFlag()
         public Motion CurrentMotionState { get; set; }
-        public MotionCommand CurrentMotionCommand { get; set; }
+
+        public MoveToState CurrentMoveToState { get; set; } = new MoveToState();
+        public MovementData CurrentMovementData { get; set; } = new MovementData();
+
 
         public Placement? Placement // Sometimes known as AnimationFrame
         {
@@ -995,6 +998,18 @@ namespace ACE.Server.WorldObjects
             set { if (!value.HasValue) RemoveProperty(PropertyFloat.WeaponDefense); else SetProperty(PropertyFloat.WeaponDefense, value.Value); }
         }
 
+        public double? WeaponMissileDefense
+        {
+            get => GetProperty(PropertyFloat.WeaponMissileDefense);
+            set { if (!value.HasValue) RemoveProperty(PropertyFloat.WeaponMissileDefense); else SetProperty(PropertyFloat.WeaponMissileDefense, value.Value); }
+        }
+
+        public double? WeaponMagicDefense
+        {
+            get => GetProperty(PropertyFloat.WeaponMagicDefense);
+            set { if (!value.HasValue) RemoveProperty(PropertyFloat.WeaponMagicDefense); else SetProperty(PropertyFloat.WeaponMagicDefense, value.Value); }
+        }
+
         public double? WeaponOffense
         {
             get => GetProperty(PropertyFloat.WeaponOffense);
@@ -1378,19 +1393,19 @@ namespace ACE.Server.WorldObjects
         public int? GemCount
         {
             get => GetProperty(PropertyInt.GemCount);
-            set { if (!value.HasValue) RemoveProperty(PropertyInt.GemCount); else SetProperty(PropertyInt.GemCount, (int)value.Value); }
+            set { if (!value.HasValue) RemoveProperty(PropertyInt.GemCount); else SetProperty(PropertyInt.GemCount, value.Value); }
         }
 
-        public int? Attuned
+        public AttunedStatus? Attuned
         {
-            get => GetProperty(PropertyInt.Attuned);
-            set { if (!value.HasValue) RemoveProperty(PropertyInt.Attuned); else SetProperty(PropertyInt.Attuned, value.Value); }
+            get => (AttunedStatus?)GetProperty(PropertyInt.Attuned);
+            set { if (!value.HasValue) RemoveProperty(PropertyInt.Attuned); else SetProperty(PropertyInt.Attuned, (int)value.Value); }
         }
 
-        public int? Bonded
+        public BondedStatus? Bonded
         {
-            get => GetProperty(PropertyInt.Bonded);
-            set { if (!value.HasValue) RemoveProperty(PropertyInt.Bonded); else SetProperty(PropertyInt.Bonded, value.Value); }
+            get => (BondedStatus?)GetProperty(PropertyInt.Bonded);
+            set { if (!value.HasValue) RemoveProperty(PropertyInt.Bonded); else SetProperty(PropertyInt.Bonded, (int)value.Value); }
         }
 
         public bool IsOpen
@@ -2354,12 +2369,6 @@ namespace ACE.Server.WorldObjects
             set { if (!value.HasValue) RemoveProperty(PropertyInstanceId.CurrentFollowTarget); else SetProperty(PropertyInstanceId.CurrentFollowTarget, value.Value); }
         }
 
-        public uint? CurrentAppraisalTarget
-        {
-            get => GetProperty(PropertyInstanceId.CurrentAppraisalTarget);
-            set { if (!value.HasValue) RemoveProperty(PropertyInstanceId.CurrentAppraisalTarget); else SetProperty(PropertyInstanceId.CurrentAppraisalTarget, value.Value); }
-        }
-
         public uint? CurrentFellowshipAppraisalTarget
         {
             get => GetProperty(PropertyInstanceId.CurrentFellowshipAppraisalTarget);
@@ -2382,12 +2391,6 @@ namespace ACE.Server.WorldObjects
         {
             get => GetProperty(PropertyInstanceId.ManaQueryTarget);
             set { if (!value.HasValue) RemoveProperty(PropertyInstanceId.ManaQueryTarget); else SetProperty(PropertyInstanceId.ManaQueryTarget, value.Value); }
-        }
-
-        public uint? RequestedAppraisalTarget
-        {
-            get => GetProperty(PropertyInstanceId.RequestedAppraisalTarget);
-            set { if (!value.HasValue) RemoveProperty(PropertyInstanceId.RequestedAppraisalTarget); else SetProperty(PropertyInstanceId.RequestedAppraisalTarget, value.Value); }
         }
 
         public PKLevel PkLevel
@@ -2445,6 +2448,7 @@ namespace ACE.Server.WorldObjects
         }
 
         /// <summary>
+        /// <para>Used to mark when EnterWorld has completed for first time for this object's instance.</para>
         /// Currently used by Generators and Players
         /// </summary>
         public bool FirstEnterWorldDone
@@ -2761,11 +2765,11 @@ namespace ACE.Server.WorldObjects
             set { if (!value.HasValue) RemoveProperty(PropertyInt.Lifespan); else SetProperty(PropertyInt.Lifespan, value.Value); }
         }
 
-        public int? RemainingLifespan
-        {
-            get => GetProperty(PropertyInt.RemainingLifespan);
-            set { if (!value.HasValue) RemoveProperty(PropertyInt.RemainingLifespan); else SetProperty(PropertyInt.RemainingLifespan, value.Value); }
-        }
+        //public int? RemainingLifespan
+        //{
+        //    get => GetProperty(PropertyInt.RemainingLifespan);
+        //    set { if (!value.HasValue) RemoveProperty(PropertyInt.RemainingLifespan); else SetProperty(PropertyInt.RemainingLifespan, value.Value); }
+        //}
 
         public bool HearLocalSignals
         {
@@ -2801,6 +2805,28 @@ namespace ACE.Server.WorldObjects
         {
             get => GetProperty(PropertyInt.PlayerKillsPkl);
             set { if (!value.HasValue) RemoveProperty(PropertyInt.PlayerKillsPkl); else SetProperty(PropertyInt.PlayerKillsPkl, value.Value); }
+        }
+
+        public SummoningMastery? SummoningMastery
+        {
+            get => (SummoningMastery?)GetProperty(PropertyInt.SummoningMastery);
+            set { if (!value.HasValue) RemoveProperty(PropertyInt.SummoningMastery); else SetProperty(PropertyInt.SummoningMastery, (int)value.Value); }
+        }
+
+        public double? MaximumVelocity
+        {
+            get => GetProperty(PropertyFloat.MaximumVelocity);
+            set { if (!value.HasValue) RemoveProperty(PropertyFloat.MaximumVelocity); else SetProperty(PropertyFloat.MaximumVelocity, value.Value); }
+        }
+
+        /// <summary>
+        /// Indicates the maximum amount of items w/ this wcid
+        /// a player can have in their possession
+        /// </summary>
+        public int? Unique
+        {
+            get => GetProperty(PropertyInt.Unique);
+            set { if (!value.HasValue) RemoveProperty(PropertyInt.Unique); else SetProperty(PropertyInt.Unique, value.Value); }
         }
 
         /// <summary>

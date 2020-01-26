@@ -54,7 +54,7 @@ namespace ACE.Server.Network.Structure
             DamageVariance = GetDamageVariance(weapon, wielder);
             DamageMod = GetDamageMultiplier(weapon, wielder);
             WeaponLength = weapon.GetProperty(PropertyFloat.WeaponLength) ?? 1.0f;
-            MaxVelocity = weapon.GetProperty(PropertyFloat.MaximumVelocity) ?? 1.0f;
+            MaxVelocity = weapon.MaximumVelocity ?? 1.0f;
             WeaponOffense = GetWeaponOffense(weapon, wielder);
             //MaxVelocityEstimated = (uint)Math.Round(MaxVelocity);   // not found in pcaps?
         }
@@ -103,9 +103,9 @@ namespace ACE.Server.Network.Structure
         {
             var baseMultiplier = weapon.GetProperty(PropertyFloat.DamageMod) ?? 1.0f;
             var damageMod = weapon.EnchantmentManager.GetDamageMod();
-            var auraDamageMod = wielder != null ? wielder.EnchantmentManager.GetDamageMod() : 1.0f;
-            Enchantment_DamageMod = weapon.IsEnchantable ? damageMod * auraDamageMod : damageMod;
-            return (float)(baseMultiplier * Enchantment_DamageMod);
+            var auraDamageMod = wielder != null ? wielder.EnchantmentManager.GetDamageMod() : 0.0f;
+            Enchantment_DamageMod = weapon.IsEnchantable ? damageMod + auraDamageMod : damageMod;
+            return (float)(baseMultiplier + Enchantment_DamageMod);
         }
 
         /// <summary>

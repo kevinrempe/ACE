@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Linq;
 using System.Threading;
 
 using ACE.Database;
@@ -15,11 +16,11 @@ namespace ACE.Server.WorldObjects
 {
     partial class Player
     {
-        public List<ObjectGuid> ItemsInTradeWindow = new List<ObjectGuid>();
+        public HashSet<ObjectGuid> ItemsInTradeWindow = new HashSet<ObjectGuid>();
 
         public ObjectGuid TradePartner;
 
-        private bool IsTrading;
+        public bool IsTrading { get; private set; }
 
         private bool TradeAccepted;
 
@@ -129,7 +130,6 @@ namespace ACE.Server.WorldObjects
                 if (wo == null)
                     return;
             }
-                
 
             if (wo.IsAttunedOrContainsAttuned)
             {
@@ -138,10 +138,18 @@ namespace ACE.Server.WorldObjects
                 return;
             }
 
+            if (wo.IsUniqueOrContainsUnique && !target.CheckUniques(wo, this))
+            {
+                // WeenieError.TooManyUniqueItems / WeenieErrorWithString._CannotCarryAnymore?
+                Session.Network.EnqueueSend(new GameEventTradeFailure(Session, itemGuid, WeenieError.None));
+                return;
+            }
+
             ItemsInTradeWindow.Add(new ObjectGuid(itemGuid));
 
             Session.Network.EnqueueSend(new GameEventAddToTrade(Session, itemGuid, TradeSide.Self));
 
+            target.AddKnownTradeObj(Guid, wo.Guid);
             target.TrackObject(wo);
 
             var actionChain = new ActionChain();
@@ -257,6 +265,7 @@ namespace ACE.Server.WorldObjects
                 HandleActionResetTrade(Guid);
                 target.HandleActionResetTrade(target.Guid);
             });
+
             actionChain.EnqueueChain();
         }
 
@@ -387,6 +396,49 @@ namespace ACE.Server.WorldObjects
             partner.ClearTradeAcceptance();
 
             return false;
+        }
+
+        public Dictionary<ObjectGuid, HashSet<ObjectGuid>> KnownTradeObjs = new Dictionary<ObjectGuid, HashSet<ObjectGuid>>();
+
+        public void AddKnownTradeObj(ObjectGuid playerGuid, ObjectGuid itemGuid)
+        {
+            if (!KnownTradeObjs.TryGetValue(playerGuid, out var knownTradeItems))
+            {
+                knownTradeItems = new HashSet<ObjectGuid>();
+                KnownTradeObjs.Add(playerGuid, knownTradeItems);
+            }
+            knownTradeItems.Add(itemGuid);
+        }
+
+        public Player GetKnownTradeObj(ObjectGuid itemGuid)
+        {
+            if (KnownTradeObjs.Count() == 0)
+                return null;
+
+            PruneKnownTradeObjs();
+
+            foreach (var knownTradeObj in KnownTradeObjs)
+            {
+                if (knownTradeObj.Value.Contains(itemGuid))
+                {
+                    var playerGuid = knownTradeObj.Key;
+                    var player = ObjMaint.GetKnownObject(playerGuid.Full)?.WeenieObj?.WorldObject as Player;
+                    if (player != null && player.Location != null && Location.DistanceTo(player.Location) <= LocalBroadcastRange)
+                        return player;
+                    else
+                        return null;
+                }
+            }
+            return null;
+        }
+
+        public void PruneKnownTradeObjs()
+        {
+            foreach (var playerGuid in KnownTradeObjs.Keys.ToList())
+            {
+                if (ObjMaint.GetKnownObject(playerGuid.Full) == null)
+                    KnownTradeObjs.Remove(playerGuid);
+            }
         }
     }
 }

@@ -2,6 +2,7 @@ using ACE.Common;
 using ACE.Entity;
 using ACE.Entity.Enum;
 using ACE.Entity.Enum.Properties;
+using ACE.Server.Network.GameMessages;
 using ACE.Server.Network.GameMessages.Messages;
 
 namespace ACE.Server.WorldObjects
@@ -51,7 +52,7 @@ namespace ACE.Server.WorldObjects
 
         public bool IsPlussed
         {
-            get => Character.IsPlussed || (ConfigManager.Config.Server.Accounts.OverrideCharacterPermissions && Session.AccessLevel > AccessLevel.Advocate);
+            get => (Character != null && Character.IsPlussed) || (Session != null && ConfigManager.Config.Server.Accounts.OverrideCharacterPermissions && Session.AccessLevel > AccessLevel.Advocate);
         }
 
         public string GodState
@@ -215,6 +216,33 @@ namespace ACE.Server.WorldObjects
         {
             get => GetProperty(PropertyInt.HouseRentTimestamp);
             set { if (!value.HasValue) RemoveProperty(PropertyInt.HouseRentTimestamp); else SetProperty(PropertyInt.HouseRentTimestamp, value.Value); }
+        }
+
+        /// <summary>
+        /// The timestamp when the player last logged in
+        /// </summary>
+        public double? LoginTimestamp
+        {
+            get => GetProperty(PropertyFloat.LoginTimestamp);
+            set { if (!value.HasValue) RemoveProperty(PropertyFloat.LoginTimestamp); else SetProperty(PropertyFloat.LoginTimestamp, value.Value); }
+        }
+
+        /// <summary>
+        /// The timestamp when the player last logged off
+        /// </summary>
+        public double? LogoffTimestamp
+        {
+            get => GetProperty(PropertyFloat.LogoffTimestamp);
+            set { if (!value.HasValue) RemoveProperty(PropertyFloat.LogoffTimestamp); else SetProperty(PropertyFloat.LogoffTimestamp, value.Value); }
+        }
+
+        /// <summary>
+        /// The timestamp when the last teleport started
+        /// </summary>
+        public double? LastTeleportStartTimestamp
+        {
+            get => GetProperty(PropertyFloat.LastTeleportStartTimestamp);
+            set { if (!value.HasValue) RemoveProperty(PropertyFloat.LastTeleportStartTimestamp); else SetProperty(PropertyFloat.LastTeleportStartTimestamp, value.Value); }
         }
 
         public bool SpellComponentsRequired
@@ -752,7 +780,7 @@ namespace ACE.Server.WorldObjects
 
         /// <summary>
         /// Aura of Mana Flow
-        /// Reduces the mana consumption of your items equal to 1 rating point per level (max 5 stacks)
+        /// Reduces the mana consumption of your items equal to 5 rating points per level (max 5 stacks)
         /// This is expressed as a rating, where the mana consumption is multiplied by the following: 100 / (100 + Mana Consumption Reduction Rating)
         /// </summary>
         public int LumAugItemManaUsage
@@ -764,7 +792,7 @@ namespace ACE.Server.WorldObjects
         /// <summary>
         /// Aura of Mana Infusion
         /// Increases the mana provided by Mana Stones to your items (max 5 stacks)
-        /// The mana is increased by a rating of 1 per level.
+        /// The mana is increased by a rating of 5 per level.
         /// </summary>
         public int LumAugItemManaGain
         {
@@ -855,12 +883,6 @@ namespace ACE.Server.WorldObjects
             set { if (value == 0) RemoveProperty(PropertyInt.RangedMastery); else SetProperty(PropertyInt.RangedMastery, value); }
         }
 
-        public int SummoningMastery
-        {
-            get => GetProperty(PropertyInt.SummoningMastery) ?? 0;
-            set { if (value == 0) RemoveProperty(PropertyInt.SummoningMastery); else SetProperty(PropertyInt.SummoningMastery, value); }
-        }
-
         // ============ Enlightenment =============
 
         public int Enlightenment
@@ -903,10 +925,7 @@ namespace ACE.Server.WorldObjects
 
             var msg = new GameMessagePublicUpdatePropertyInt(obj, prop, value ?? 0);
 
-            if (broadcast)
-                EnqueueBroadcast(msg);
-            else
-                Session.Network.EnqueueSend(msg);
+            SendNetwork(msg, broadcast);
         }
 
         public void UpdateProperty(WorldObject obj, PropertyBool prop, bool? value, bool broadcast = false)
@@ -918,10 +937,7 @@ namespace ACE.Server.WorldObjects
 
             var msg = new GameMessagePublicUpdatePropertyBool(obj, prop, value ?? false);
 
-            if (broadcast)
-                EnqueueBroadcast(msg);
-            else
-                Session.Network.EnqueueSend(msg);
+            SendNetwork(msg, broadcast);
         }
 
         public void UpdateProperty(WorldObject obj, PropertyFloat prop, double? value, bool broadcast = false)
@@ -933,10 +949,7 @@ namespace ACE.Server.WorldObjects
 
             var msg = new GameMessagePublicUpdatePropertyFloat(obj, prop, value ?? 0.0);
 
-            if (broadcast)
-                EnqueueBroadcast(msg);
-            else
-                Session.Network.EnqueueSend(msg);
+            SendNetwork(msg, broadcast);
         }
 
         public void UpdateProperty(WorldObject obj, PropertyDataId prop, uint? value, bool broadcast = false)
@@ -948,10 +961,16 @@ namespace ACE.Server.WorldObjects
 
             var msg = new GameMessagePublicUpdatePropertyDataID(obj, prop, value ?? 0);
 
-            if (broadcast)
-                EnqueueBroadcast(msg);
-            else
-                Session.Network.EnqueueSend(msg);
+            SendNetwork(msg, broadcast);
+        }
+
+        /// <summary>
+        /// Updates a property on the server, and broadcasts to appropriate players
+        /// </summary>
+        /// <param name="broadcast">If true, also broadcasts to all players who know about this player</param>
+        public void UpdateProperty(PropertyInstanceId prop, uint? value, bool broadcast = false)
+        {
+            UpdateProperty(this, prop, value, broadcast);
         }
 
         public void UpdateProperty(WorldObject obj, PropertyInstanceId prop, uint? value, bool broadcast = false)
@@ -963,10 +982,7 @@ namespace ACE.Server.WorldObjects
 
             var msg = new GameMessagePublicUpdateInstanceID(obj, prop, new ObjectGuid(value ?? 0));
 
-            if (broadcast)
-                EnqueueBroadcast(msg);
-            else
-                Session.Network.EnqueueSend(msg);
+            SendNetwork(msg, broadcast);
         }
 
         public void UpdateProperty(WorldObject obj, PropertyString prop, string value, bool broadcast = false)
@@ -980,10 +996,7 @@ namespace ACE.Server.WorldObjects
             // and the object will not update until relogging or CO
             var msg = new GameMessagePublicUpdatePropertyString(obj, prop, value);
 
-            if (broadcast)
-                EnqueueBroadcast(msg);
-            else
-                Session.Network.EnqueueSend(msg);
+            SendNetwork(msg, broadcast);
         }
 
         public void UpdateProperty(WorldObject obj, PropertyInt64 prop, long? value, bool broadcast = false)
@@ -995,6 +1008,11 @@ namespace ACE.Server.WorldObjects
 
             var msg = new GameMessagePublicUpdatePropertyInt64(obj, prop, value ?? 0);
 
+            SendNetwork(msg, broadcast);
+        }
+
+        public void SendNetwork(GameMessage msg, bool broadcast)
+        {
             if (broadcast)
                 EnqueueBroadcast(msg);
             else
@@ -1057,5 +1075,27 @@ namespace ACE.Server.WorldObjects
             get => (SquelchMask)(GetProperty(PropertyInt.SquelchGlobal) ?? 0);
             set { if (value == 0) RemoveProperty(PropertyInt.SquelchGlobal); else SetProperty(PropertyInt.SquelchGlobal, (int)value); }
         }
+
+        public uint? RequestedAppraisalTarget
+        {
+            get => GetProperty(PropertyInstanceId.RequestedAppraisalTarget);
+            set { if (!value.HasValue) RemoveProperty(PropertyInstanceId.RequestedAppraisalTarget); else SetProperty(PropertyInstanceId.RequestedAppraisalTarget, value.Value); }
+        }
+
+        public double? AppraisalRequestedTimestamp
+        {
+            get => GetProperty(PropertyFloat.AppraisalRequestedTimestamp);
+            set { if (!value.HasValue) RemoveProperty(PropertyFloat.AppraisalRequestedTimestamp); else SetProperty(PropertyFloat.AppraisalRequestedTimestamp, value.Value); }
+        }
+
+        /// <summary>
+        /// ACE is currently using this for the last successful appraised object guid
+        /// </summary>
+        public uint? CurrentAppraisalTarget
+        {
+            get => GetProperty(PropertyInstanceId.CurrentAppraisalTarget);
+            set { if (!value.HasValue) RemoveProperty(PropertyInstanceId.CurrentAppraisalTarget); else SetProperty(PropertyInstanceId.CurrentAppraisalTarget, value.Value); }
+        }
+
     }
 }

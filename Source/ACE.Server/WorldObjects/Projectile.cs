@@ -1,3 +1,5 @@
+using System;
+
 using ACE.Entity.Enum;
 using ACE.Server.Entity;
 using ACE.Server.Network.GameEvent.Events;
@@ -14,10 +16,10 @@ namespace ACE.Server.WorldObjects
     {
         public WorldObject WorldObject;
 
-        public PhysicsObj PhysicsObj { get => WorldObject.PhysicsObj; }
+        public PhysicsObj PhysicsObj => WorldObject.PhysicsObj;
 
-        public WorldObject ProjectileSource { get => WorldObject.ProjectileSource; }
-        public WorldObject ProjectileTarget { get => WorldObject.ProjectileTarget; }
+        public WorldObject ProjectileSource => WorldObject.ProjectileSource;
+        public WorldObject ProjectileTarget => WorldObject.ProjectileTarget;
 
         public Projectile() { }
 
@@ -30,7 +32,7 @@ namespace ACE.Server.WorldObjects
         {
             if (!PhysicsObj.is_active()) return;
 
-            //Console.WriteLine(string.Format("Projectile.OnCollideObject({0} - {1} || {2} - {3})", Guid.Full.ToString("X8"), Name, target.Guid.Full.ToString("X8"), target.Name));
+            //Console.WriteLine($"Projectile.OnCollideObject - {WorldObject.Name} ({WorldObject.Guid}) -> {target.Name} ({target.Guid})");
 
             if (ProjectileTarget == null || ProjectileTarget != target)
             {
@@ -99,20 +101,34 @@ namespace ACE.Server.WorldObjects
 
             WorldObject.CurrentLandblock?.RemoveWorldObject(WorldObject.Guid, showError: !PhysicsObj.entering_world);
             PhysicsObj.set_active(false);
+
+            WorldObject.HitMsg = true;
         }
 
         public void OnCollideEnvironment()
         {
             if (!PhysicsObj.is_active()) return;
 
-            //Console.WriteLine("Projectile.OnCollideEnvironment(" + Guid.Full.ToString("X8") + ")");
+            // do not send 'Your missile attack hit the environment' messages to player,
+            // if projectile is still in the process of spawning into world.
+            if (PhysicsObj.entering_world)
+                return;
+
+            //Console.WriteLine($"Projectile.OnCollideEnvironment({WorldObject.Name} - {WorldObject.Guid})");
 
             WorldObject.CurrentLandblock?.RemoveWorldObject(WorldObject.Guid, showError: !PhysicsObj.entering_world);
             PhysicsObj.set_active(false);
 
-            var player = ProjectileSource as Player;
-            if (player != null)
+            if (ProjectileSource is Player player)
+            {
                 player.Session.Network.EnqueueSend(new GameMessageSystemChat("Your missile attack hit the environment.", ChatMessageType.Broadcast));
+            }
+            else if (ProjectileSource is Creature creature)
+            {
+                creature.MonsterProjectile_OnCollideEnvironment();
+            }
+
+            WorldObject.HitMsg = true;
         }
     }
 }

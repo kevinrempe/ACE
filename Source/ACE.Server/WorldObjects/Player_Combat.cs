@@ -393,7 +393,7 @@ namespace ACE.Server.WorldObjects
 
             // splatter effects
             //var splatter = new GameMessageScript(Guid, (PlayScript)Enum.Parse(typeof(PlayScript), "Splatter" + creature.GetSplatterHeight() + creature.GetSplatterDir(this)));  // not sent in retail, but great visual indicator?
-            var splatter = new GameMessageScript(Guid, damageType == DamageType.Nether ? ACE.Entity.Enum.PlayScript.HealthDownVoid : ACE.Entity.Enum.PlayScript.DirtyFightingDamageOverTime);
+            var splatter = new GameMessageScript(Guid, damageType == DamageType.Nether ? PlayScript.HealthDownVoid : PlayScript.DirtyFightingDamageOverTime);
             EnqueueBroadcast(splatter);
 
             if (Health.Current <= 0)
@@ -446,7 +446,7 @@ namespace ACE.Server.WorldObjects
 
             if (Health.Current <= 0)
             {
-                OnDeath(source, damageType, crit);
+                OnDeath(new DamageHistoryInfo(source), damageType, crit);
                 Die();
                 return (int)damageTaken;
             }
@@ -603,57 +603,77 @@ namespace ACE.Server.WorldObjects
         /// <summary>
         /// Returns TRUE if this player is PK and died to another player
         /// </summary>
-        public bool IsPKDeath(WorldObject topDamager)
+        public bool IsPKDeath(DamageHistoryInfo topDamager)
         {
             return IsPKDeath(topDamager?.Guid.Full);
         }
 
         public bool IsPKDeath(uint? killerGuid)
         {
-            return PlayerKillerStatus.HasFlag(PlayerKillerStatus.PK) && new ObjectGuid(killerGuid ?? 0).IsPlayer();
+            return PlayerKillerStatus.HasFlag(PlayerKillerStatus.PK) && new ObjectGuid(killerGuid ?? 0).IsPlayer() && killerGuid != Guid.Full;
         }
 
         /// <summary>
         /// Returns TRUE if this player is PKLite and died to another player
         /// </summary>
-        public bool IsPKLiteDeath(WorldObject topDamager)
+        public bool IsPKLiteDeath(DamageHistoryInfo topDamager)
         {
             return IsPKLiteDeath(topDamager?.Guid.Full);
         }
 
         public bool IsPKLiteDeath(uint? killerGuid)
         {
-            return PlayerKillerStatus.HasFlag(PlayerKillerStatus.PKLite) && new ObjectGuid(killerGuid ?? 0).IsPlayer();
+            return PlayerKillerStatus.HasFlag(PlayerKillerStatus.PKLite) && new ObjectGuid(killerGuid ?? 0).IsPlayer() && killerGuid != Guid.Full;
         }
 
         /// <summary>
         /// This method processes the Game Action (F7B1) Change Combat Mode (0x0053)
         /// </summary>
-        public void HandleGameActionChangeCombatMode(CombatMode newCombatMode)
+        public void HandleActionChangeCombatMode(CombatMode newCombatMode)
+        {
+            //log.Info($"{Name}.HandleActionChangeCombatMode({newCombatMode})");
+
+            if (DateTime.UtcNow >= NextUseTime)
+                HandleActionChangeCombatMode_Inner(newCombatMode);
+            else
+            {
+                var actionChain = new ActionChain();
+                actionChain.AddDelaySeconds((NextUseTime - DateTime.UtcNow).TotalSeconds);
+                actionChain.AddAction(this, () => HandleActionChangeCombatMode_Inner(newCombatMode));
+                actionChain.EnqueueChain();
+            }
+        }
+
+        public void HandleActionChangeCombatMode_Inner(CombatMode newCombatMode)
         {
             var currentCombatStance = GetCombatStance();
 
             var missileWeapon = GetEquippedMissileWeapon();
             var caster = GetEquippedWand();
 
+            if (CombatMode == CombatMode.Magic && MagicState.IsCasting)
+                FailCast();
+
+            float animTime = 0.0f, queueTime = 0.0f;
+
             switch (newCombatMode)
             {
                 case CombatMode.NonCombat:
-                {
-                    switch (currentCombatStance)
                     {
-                        case MotionStance.BowCombat:
-                        case MotionStance.CrossbowCombat:
-                        case MotionStance.AtlatlCombat:
+                        switch (currentCombatStance)
                         {
-                            var equippedAmmo = GetEquippedAmmo();
-                            if (equippedAmmo != null)
-                                ClearChild(equippedAmmo); // We must clear the placement/parent when going back to peace
-                            break;
+                            case MotionStance.BowCombat:
+                            case MotionStance.CrossbowCombat:
+                            case MotionStance.AtlatlCombat:
+                                {
+                                    var equippedAmmo = GetEquippedAmmo();
+                                    if (equippedAmmo != null)
+                                        ClearChild(equippedAmmo); // We must clear the placement/parent when going back to peace
+                                    break;
+                                }
                         }
+                        break;
                     }
-                    break;
-                }
                 case CombatMode.Melee:
 
                     // todo expand checks
@@ -663,39 +683,40 @@ namespace ACE.Server.WorldObjects
                     break;
 
                 case CombatMode.Missile:
-                {
-                    if (missileWeapon == null)
-                        return;
-
-                    switch (currentCombatStance)
                     {
-                        case MotionStance.BowCombat:
-                        case MotionStance.CrossbowCombat:
-                        case MotionStance.AtlatlCombat:
-                        {
-                            var equippedAmmo = GetEquippedAmmo();
-                            if (equippedAmmo == null)
-                            {
-                                var animTime = SetCombatMode(newCombatMode);
-                                Session.Network.EnqueueSend(new GameEventCommunicationTransientString(Session, "You are out of ammunition!"));
+                        if (missileWeapon == null)
+                            return;
 
-                                var actionChain = new ActionChain();
-                                actionChain.AddDelaySeconds(animTime);
-                                actionChain.AddAction(this, () => SetCombatMode(CombatMode.NonCombat));
-                                actionChain.EnqueueChain();
-                                return;
-                            }
-                            else
-                            {
-                                // We must set the placement/parent when going into combat
-                                equippedAmmo.Placement = ACE.Entity.Enum.Placement.RightHandCombat;
-                                equippedAmmo.ParentLocation = ACE.Entity.Enum.ParentLocation.RightHand;
-                            }
-                            break;
+                        switch (currentCombatStance)
+                        {
+                            case MotionStance.BowCombat:
+                            case MotionStance.CrossbowCombat:
+                            case MotionStance.AtlatlCombat:
+                                {
+                                    var equippedAmmo = GetEquippedAmmo();
+                                    if (equippedAmmo == null)
+                                    {
+                                        animTime = SetCombatMode(newCombatMode, out queueTime);
+                                        Session.Network.EnqueueSend(new GameEventCommunicationTransientString(Session, "You are out of ammunition!"));
+                                        NextUseTime = DateTime.UtcNow.AddSeconds(animTime - queueTime);
+
+                                        var actionChain = new ActionChain();
+                                        actionChain.AddDelaySeconds(animTime - queueTime);
+                                        actionChain.AddAction(this, () => SetCombatMode(CombatMode.NonCombat));
+                                        actionChain.EnqueueChain();
+                                        return;
+                                    }
+                                    else
+                                    {
+                                        // We must set the placement/parent when going into combat
+                                        equippedAmmo.Placement = ACE.Entity.Enum.Placement.RightHandCombat;
+                                        equippedAmmo.ParentLocation = ACE.Entity.Enum.ParentLocation.RightHand;
+                                    }
+                                    break;
+                                }
                         }
+                        break;
                     }
-                    break;
-                }
 
                 case CombatMode.Magic:
 
@@ -706,16 +727,13 @@ namespace ACE.Server.WorldObjects
                     break;
 
             }
-            SetCombatMode(newCombatMode);
-        }
+            animTime = SetCombatMode(newCombatMode, out queueTime);
+            //log.Info($"{Name}.HandleActionChangeCombatMode_Inner({newCombatMode}) - animTime: {animTime}, queueTime: {queueTime}");
 
-        /// <summary>
-        /// Returns the current attack maneuver for a player
-        /// </summary>
-        public override AttackType GetAttackType(WorldObject weapon, CombatManeuver combatManuever)
-        {
-            // should probably come from combat maneuvers table, even for players
-            return GetWeaponAttackType(weapon);
+            NextUseTime = DateTime.UtcNow.AddSeconds(animTime - queueTime);
+
+            if (RecordCast.Enabled)
+                RecordCast.OnSetCombatMode(newCombatMode);
         }
 
         public override bool CanDamage(Creature target)
@@ -817,6 +835,9 @@ namespace ACE.Server.WorldObjects
         public static void UpdatePKTimers(Player attacker, Player defender)
         {
             if (attacker == defender) return;
+
+            if (attacker.PlayerKillerStatus == PlayerKillerStatus.Free || defender.PlayerKillerStatus == PlayerKillerStatus.Free)
+                return;
 
             attacker.UpdatePKTimer();
             defender.UpdatePKTimer();

@@ -4,6 +4,7 @@ using System.Linq;
 
 using log4net;
 
+using ACE.Common;
 using ACE.Database.Models.Shard;
 using ACE.Database.Models.World;
 using ACE.Entity;
@@ -133,7 +134,7 @@ namespace ACE.Server.WorldObjects
                             ItemCurMana -= adjustedRation;
 
                             if (player.LumAugItemManaGain != 0)
-                                adjustedRation = (int)Math.Round(adjustedRation * Creature.GetPositiveRatingMod(player.LumAugItemManaGain));
+                                adjustedRation = (int)Math.Round(adjustedRation * Creature.GetPositiveRatingMod(player.LumAugItemManaGain * 5));
 
                             item.ItemCurMana += adjustedRation;
                             if (!itemsGivenMana.ContainsKey(item))

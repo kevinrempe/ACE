@@ -24,7 +24,8 @@ namespace ACE.Server.WorldObjects
             // Save the the LoginTimestamp
             var lastLoginTimestamp = Time.GetUnixTime();
 
-            SetProperty(PropertyInt.LoginTimestamp, (int)lastLoginTimestamp);
+            LoginTimestamp = lastLoginTimestamp;
+            LastTeleportStartTimestamp = lastLoginTimestamp;
 
             Character.LastLoginTimestamp = lastLoginTimestamp;
             Character.TotalLogins++;
@@ -39,6 +40,13 @@ namespace ACE.Server.WorldObjects
                 AllegianceRank = (int)AllegianceNode.Rank;
             else
                 AllegianceRank = null;
+
+            if (!Account15Days)
+            {
+                var accountTimeSpan = DateTime.UtcNow - Account.CreateTime;
+                if (accountTimeSpan.TotalDays >= 15)
+                    Account15Days = true;
+            }
 
             // SendSelf will trigger the entrance into portal space
             SendSelf();
@@ -65,6 +73,9 @@ namespace ACE.Server.WorldObjects
                 SquelchManager.SendSquelchDB();
 
             AuditItemSpells();
+
+            HandleMissingXp();
+            HandleSkillCreditRefund();
 
             if (PlayerKillerStatus == PlayerKillerStatus.PKLite && !PropertyManager.GetBool("pkl_server").Item)
             {
@@ -178,14 +189,14 @@ namespace ACE.Server.WorldObjects
         /// <summary>
         /// Records where the client thinks we are, for use by physics engine later
         /// </summary>
-        public void SetRequestedLocation(Position pos)
+        public void SetRequestedLocation(Position pos, bool broadcast = true)
         {
             RequestedLocation = pos;
+            RequestedLocationBroadcast = broadcast;
         }
 
-        //public DateTime LastSoulEmote;
-
-        //private static TimeSpan SoulEmoteTime = TimeSpan.FromSeconds(2);
+        public MotionCommand LastSoulEmote;
+        public DateTime LastSoulEmoteEndTime;
 
         public void BroadcastMovement(MoveToState moveToState)
         {
@@ -213,14 +224,23 @@ namespace ACE.Server.WorldObjects
                     CurrentMotionState.SetForwardCommand(state.Commands[0].MotionCommand);
             }
 
-            /*if (state.HasSoulEmote())
+            if (state.HasSoulEmote(false))
             {
                 // prevent soul emote spam / bug where client sends multiples
-                var elapsed = DateTime.UtcNow - LastSoulEmote;
-                if (elapsed < SoulEmoteTime) return;
+                var soulEmote = state.Commands[0].MotionCommand;
+                if (soulEmote == LastSoulEmote && DateTime.UtcNow < LastSoulEmoteEndTime)
+                {
+                    state.Commands.Clear();
+                    state.CommandListLength = 0;
+                }
+                else
+                {
+                    var animLength = Physics.Animation.MotionTable.GetAnimationLength(MotionTableId, CurrentMotionState.Stance, soulEmote, state.Commands[0].Speed);
 
-                LastSoulEmote = DateTime.UtcNow;
-            }*/
+                    LastSoulEmote = soulEmote;
+                    LastSoulEmoteEndTime = DateTime.UtcNow + TimeSpan.FromSeconds(animLength);
+                }
+            }
 
             var movementData = new MovementData(this, moveToState);
 
@@ -228,7 +248,8 @@ namespace ACE.Server.WorldObjects
             EnqueueBroadcast(false, movementEvent);    // shouldn't need to go to originating player?
 
             // TODO: use real motion / animation system from physics
-            CurrentMotionCommand = movementData.Invalid.State.ForwardCommand;
+            //CurrentMotionCommand = movementData.Invalid.State.ForwardCommand;
+            CurrentMovementData = movementData;
         }
 
         private EnvironChangeType? currentFogColor;
@@ -280,6 +301,21 @@ namespace ACE.Server.WorldObjects
 
             if (broadcast)
                 EnqueueBroadcast(new GameMessagePublicUpdatePropertyInt(this, PropertyInt.PlayerKillerStatus, (int)PlayerKillerStatus));
+        }
+
+        public void SendWeenieError(WeenieError error)
+        {
+            Session.Network.EnqueueSend(new GameEventWeenieError(Session, error));
+        }
+
+        public void SendWeenieErrorWithString(WeenieErrorWithString error, string str)
+        {
+            Session.Network.EnqueueSend(new GameEventWeenieErrorWithString(Session, error, str));
+        }
+
+        public void SendTransientError(string msg)
+        {
+            Session.Network.EnqueueSend(new GameEventCommunicationTransientString(Session, msg));
         }
     }
 }
