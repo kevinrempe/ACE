@@ -472,6 +472,9 @@ namespace ACE.Server.WorldObjects
             if (percent >= 0.1f)
                 EnqueueBroadcast(new GameMessageSound(Guid, Sound.Wound1, 1.0f));
 
+            if (HasCloakEquipped)
+                Cloak.TryProcSpell(this, source, percent);
+
             // if player attacker, update PK timer
             if (source is Player attacker)
                 UpdatePKTimers(attacker, this);
@@ -744,7 +747,7 @@ namespace ACE.Server.WorldObjects
 
         public override bool CanDamage(Creature target)
         {
-            return true;    // handled elsewhere
+            return target.Attackable && !target.Teleporting && !(target is CombatPet);
         }
 
         // http://acpedia.org/wiki/Announcements_-_2002/04_-_Betrayal
