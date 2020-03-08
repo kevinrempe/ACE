@@ -51,7 +51,14 @@ namespace ACE.Server.WorldObjects
             //log.Info($"-");
 
             if (CombatMode != CombatMode.Melee)
-                return;
+            {
+                log.Error($"{Name}.HandleActionTargetedMeleeAttack({targetGuid:X8}, {attackHeight}, {powerLevel}) - CombatMode mismatch {CombatMode}, LastCombatMode {LastCombatMode}");
+
+                if (LastCombatMode == CombatMode.Melee)
+                    CombatMode = CombatMode.Melee;
+                else
+                    return;
+            }
 
             if (IsBusy)
             {
@@ -212,7 +219,7 @@ namespace ACE.Server.WorldObjects
             if (AttackSequence != attackSequence)
                 return;
 
-            if (CombatMode != CombatMode.Melee || MeleeTarget == null || !IsAlive)
+            if (CombatMode != CombatMode.Melee || MeleeTarget == null || IsBusy || !IsAlive)
             {
                 OnAttackDone();
                 return;

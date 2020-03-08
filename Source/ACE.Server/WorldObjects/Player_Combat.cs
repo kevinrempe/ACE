@@ -29,18 +29,6 @@ namespace ACE.Server.WorldObjects
     /// </summary>
     partial class Player
     {
-        public enum DebugDamageType
-        {
-            None     = 0x0,
-            Attacker = 0x1,
-            Defender = 0x2,
-            All      = Attacker | Defender
-        };
-
-        public DebugDamageType DebugDamage;
-
-        public ObjectGuid DebugDamageTarget;
-
         public int AttackSequence;
         public bool Attacking;
 
@@ -631,6 +619,8 @@ namespace ACE.Server.WorldObjects
             return PlayerKillerStatus.HasFlag(PlayerKillerStatus.PKLite) && new ObjectGuid(killerGuid ?? 0).IsPlayer() && killerGuid != Guid.Full;
         }
 
+        public CombatMode LastCombatMode;
+
         public static readonly float UseTimeEpsilon = 0.05f;
 
         /// <summary>
@@ -640,6 +630,8 @@ namespace ACE.Server.WorldObjects
         {
             //log.Info($"{Name}.HandleActionChangeCombatMode({newCombatMode})");
 
+            LastCombatMode = newCombatMode;
+            
             if (DateTime.UtcNow >= NextUseTime.AddSeconds(UseTimeEpsilon))
                 HandleActionChangeCombatMode_Inner(newCombatMode);
             else
