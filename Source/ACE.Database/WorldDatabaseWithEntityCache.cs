@@ -79,6 +79,8 @@ namespace ACE.Database
         {
             weenieCache.Clear();
             weenieClassNameToClassIdCache.Clear();
+
+            weenieSpecificCachesPopulated = false;
         }
 
         /// <summary>
@@ -151,10 +153,7 @@ namespace ACE.Database
                 if (weenie.WeenieType == WeenieType.Scroll)
                 {
                     if (weenie.PropertiesDID.TryGetValue(PropertyDataId.Spell, out var value))
-                    {
                         scrollsBySpellID[value] = weenie;
-                        break;
-                    }
                 }
             }
 
@@ -230,6 +229,8 @@ namespace ACE.Database
                                     select weenieRecord;
 
                         var result = query.FirstOrDefault();
+
+                        if (result == null) return null;
 
                         weenie = WeenieConverter.ConvertToEntityWeenie(result);
 
