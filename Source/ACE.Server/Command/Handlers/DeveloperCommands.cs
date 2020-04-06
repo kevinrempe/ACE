@@ -11,12 +11,12 @@ using ACE.Common;
 using ACE.Common.Extensions;
 using ACE.Database;
 using ACE.Database.Models.World;
-using ACE.Database.Models.Shard;
 using ACE.DatLoader;
 using ACE.DatLoader.FileTypes;
 using ACE.Entity;
 using ACE.Entity.Enum;
 using ACE.Entity.Enum.Properties;
+using ACE.Entity.Models;
 using ACE.Server.Entity;
 using ACE.Server.Entity.Actions;
 using ACE.Server.Factories;
@@ -242,19 +242,20 @@ namespace ACE.Server.Command.Handlers
         /// <summary>
         /// playsound [Sound] (volumelevel)
         /// </summary>
-        [CommandHandler("playsound", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, "Plays a sound.", "sound (float)\n" + "Sound can be uint or enum name" + "float is volume level")]
+        [CommandHandler("playsound", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 1, "Plays a sound.", "sound (volume) (guid)\n" + "Sound can be uint or enum name\n" + "Volume and source guid are optional")]
         public static void HandlePlaySound(Session session, params string[] parameters)
         {
             try
             {
                 float volume = 1f;
-                var soundEvent = new GameMessageSound(session.Player.Guid, Sound.Invalid, volume);
 
                 if (parameters.Length > 1)
-                {
-                    if (parameters[1] != "")
-                        volume = float.Parse(parameters[1]);
-                }
+                    float.TryParse(parameters[1], out volume);
+
+                uint guid = session.Player.Guid.Full;
+
+                if (parameters.Length > 2)
+                    uint.TryParse(parameters[2].TrimStart("0x"), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out guid);
 
                 var message = $"Unable to find a sound called {parameters[0]} to play.";
 
@@ -266,7 +267,7 @@ namespace ACE.Server.Command.Handlers
                         // add the sound to the player queue for everyone to hear
                         // player action queue items will execute on the landblock
                         // player.playsound will play a sound on only the client session that called the function
-                        session.Player.HandleActionApplySoundEffect(sound);
+                        session.Player.PlaySoundEffect(sound, new ObjectGuid(guid), volume);
                     }
                 }
 
@@ -675,7 +676,7 @@ namespace ACE.Server.Command.Handlers
         [CommandHandler("listpositions", AccessLevel.Developer, CommandHandlerFlag.RequiresWorld, 0, "Displays all available saved character positions from the database.", "@listpositions")]
         public static void HandleListPositions(Session session, params string[] parameters)
         {
-            var posDict = session.Player.GetPositions();
+            var posDict = session.Player.GetAllPositions();
             string message = "Saved character positions:\n";
 
             foreach (var posPair in posDict)
@@ -2445,7 +2446,7 @@ namespace ACE.Server.Command.Handlers
                 return;
             }
 
-            obj.Biota.GetOrAddKnownSpell((int)spellId, obj.BiotaDatabaseLock, obj.BiotaPropertySpells, out var spellAdded);
+            obj.Biota.GetOrAddKnownSpell((int)spellId, obj.BiotaDatabaseLock, out var spellAdded);
 
             var msg = spellAdded ? "added to" : "already on";
 
@@ -2474,7 +2475,7 @@ namespace ACE.Server.Command.Handlers
                 return;
             }
 
-            var spellRemoved = obj.Biota.TryRemoveKnownSpell((int)spellId, out _, obj.BiotaDatabaseLock, obj.BiotaPropertySpells);
+            var spellRemoved = obj.Biota.TryRemoveKnownSpell((int)spellId, obj.BiotaDatabaseLock);
 
             var msg = spellRemoved ? "removed from" : "not found on";
 
