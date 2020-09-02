@@ -8,10 +8,12 @@ using ACE.Common;
 using ACE.Database;
 using ACE.Database.Models.World;
 using ACE.Entity.Enum;
+using ACE.Entity.Enum.Properties;
 using ACE.Entity.Models;
+using ACE.Server.Factories.Enum;
+using ACE.Server.Factories.Tables;
 using ACE.Server.Managers;
 using ACE.Server.WorldObjects;
-using ACE.Entity.Enum.Properties;
 
 namespace ACE.Server.Factories
 {
@@ -40,17 +42,34 @@ namespace ACE.Server.Factories
         }
 
         // Enum used for adjusting the loot bias for the various types of Mana forge chests
-        public enum LootBias : uint
+        // TODO: port this over to TreasureItemTypeChances
+        /*[Flags]
+        public enum LootBias
         {
-            UnBiased = 0,
-            Armor = 1,
-            Weapons = 2,
-            SpellComps = 4,
-            Clothing = 8,
-            Jewelry = 16,
-            MagicEquipment = 31,
-            MixedEquipment = 31,
-        }
+            UnBiased   = 0x0,
+            Armor      = 0x1,
+            Weapons    = 0x2,
+            SpellComps = 0x4,
+            Clothing   = 0x8,
+            Jewelry    = 0x10,
+
+            MagicEquipment = Armor | Weapons | SpellComps | Clothing | Jewelry,
+            MixedEquipment = Armor | Weapons | SpellComps | Clothing | Jewelry
+        }*/
+
+        public enum LootBias
+        {
+            UnBiased,
+
+            Armor,
+            Weapons,
+            SpellComps,
+            Clothing,
+            Jewelry,
+
+            MagicEquipment,
+            MixedEquipment
+        };
 
         public static List<WorldObject> CreateRandomLootObjects(TreasureDeath profile)
         {
@@ -168,64 +187,63 @@ namespace ACE.Server.Factories
 
         public static WorldObject CreateRandomLootObjects(TreasureDeath profile, bool isMagical, LootBias lootBias = LootBias.UnBiased)
         {
-            WorldObject wo;
+            WorldObject wo = null;
 
-            // Adjusting rolls for changing drop rates for clothing - HarliQ 11/11/19 
+            var treasureItemTypeChances = isMagical ? TreasureItemTypeChances.DefaultMagical : TreasureItemTypeChances.DefaultNonMagical;
 
-            var type = lootBias switch
+            switch (lootBias)
             {
-                LootBias.Armor => 30,
-                LootBias.Weapons => 60,
-                LootBias.Jewelry => 90,
-                _ => ThreadSafeRandom.Next(1, 100),
-            };
-
-
-            // converting to a percentage base roll for items (to better align with retail drop rate data from Magnus) - HarliQ 11/11/19
-            // Gems 14%
-            // Armor 24%
-            // Weapons 30%
-            // Clothing 13%
-            // Cloaks 1%
-            // Jewelry 18%
-
-            switch (type)
-            {
-                case var rate when (rate < 15):
-                    // jewels (Gems)
-                    wo = CreateJewels(profile.Tier, isMagical);
-                    return wo;
-                case var rate when (rate > 14 && rate < 39):
-                    //armor
-                    wo = CreateArmor(profile, isMagical, true, lootBias);
-                    return wo;
-                case var rate when (rate > 38 && rate < 52):
-                    // clothing (shirts/pants)
-                    wo = CreateArmor(profile, isMagical, false, lootBias);
-                    return wo;
-                case var rate when (rate > 51 && rate < 53):
-                    // Cloaks  
-                    wo = CreateCloak(profile);
-                    return wo;
-                case var rate when (rate > 52 && rate < 83):
-                    // weapons (Melee/Missile/Casters)
-                    wo = CreateWeapon(profile, isMagical);
-                    return wo;
-                case var rate when (rate > 83 && rate < 93):
-                    // jewelry
-                    wo = CreateJewelry(profile, isMagical);
+                case LootBias.Armor:
+                    treasureItemTypeChances = TreasureItemTypeChances.Armor;
                     break;
-                default:
-                    if (isMagical)
-                        wo = CreateJewelry(profile, isMagical); // jewelry
-                    else
-                        // Added Dinnerware at tail end of distribution, as
-                        // they are mutable loot drops that don't belong with the non-mutable drops
-                        // TODO: Will likely need some adjustment/fine tuning
-                        wo = CreateDinnerware(profile.Tier); // dinnerware
+                case LootBias.Weapons:
+                    treasureItemTypeChances = TreasureItemTypeChances.Weapons;
+                    break;
+                case LootBias.Jewelry:
+                    treasureItemTypeChances = TreasureItemTypeChances.Jewelry;
+                    break;
+
+                case LootBias.MagicEquipment:
+                case LootBias.MixedEquipment:
+                    treasureItemTypeChances = TreasureItemTypeChances.MixedMagicEquipment;
                     break;
             }
 
+            var treasureItemType = TreasureItemTypeChances.Roll(treasureItemTypeChances);
+
+            switch (treasureItemType)
+            {
+                case TreasureItemType.Gem:
+                    wo = CreateJewels(profile.Tier, isMagical);
+                    break;
+
+                case TreasureItemType.Armor:
+                    wo = CreateArmor(profile, isMagical, true, lootBias);
+                    break;
+
+                case TreasureItemType.Clothing:
+                    wo = CreateArmor(profile, isMagical, false, lootBias);
+                    break;
+
+                case TreasureItemType.Cloak:
+                    wo = CreateCloak(profile);
+                    break;
+
+                case TreasureItemType.Weapon:
+                    wo = CreateWeapon(profile, isMagical);
+                    break;
+
+                case TreasureItemType.Jewelry:
+                    wo = CreateJewelry(profile, isMagical);
+                    break;
+
+                case TreasureItemType.Dinnerware:
+                    // Added Dinnerware at tail end of distribution, as
+                    // they are mutable loot drops that don't belong with the non-mutable drops
+                    // TODO: Will likely need some adjustment/fine tuning
+                    wo = CreateDinnerware(profile.Tier);
+                    break;
+            }
             return wo;
         }
 
@@ -936,10 +954,8 @@ namespace ACE.Server.Factories
 
         private static WorldObject AssignMagic(WorldObject wo, TreasureDeath profile, bool isArmor = false)
         {
-            const int armorSpellImpenIndex = 47; // 47th row in the LootTables.ArmorSpells array, starting from zero
-
-            int[][] spells;
-            int[][] cantrips;
+            SpellId[][] spells;
+            SpellId[][] cantrips;
 
             int lowSpellTier = GetLowSpellTier(profile.Tier);
             int highSpellTier = GetHighSpellTier(profile.Tier);
@@ -949,24 +965,24 @@ namespace ACE.Server.Factories
             switch (wo.WeenieType)
             {
                 case WeenieType.Clothing:
-                    spells = LootTables.ArmorSpells;
-                    cantrips = LootTables.ArmorCantrips;
+                    spells = ArmorSpells.Table;
+                    cantrips = ArmorCantrips.Table;
                     break;
                 case WeenieType.Caster:
-                    spells = LootTables.WandSpells;
-                    cantrips = LootTables.WandCantrips;
+                    spells = WandSpells.Table;
+                    cantrips = WandCantrips.Table;
                     break;
                 case WeenieType.Generic:
-                    spells = LootTables.JewelrySpells;
-                    cantrips = LootTables.JewelryCantrips;
+                    spells = JewelrySpells.Table;
+                    cantrips = JewelryCantrips.Table;
                     break;
                 case WeenieType.MeleeWeapon:
-                    spells = LootTables.MeleeSpells;
-                    cantrips = LootTables.MeleeCantrips;
+                    spells = MeleeSpells.Table;
+                    cantrips = MeleeCantrips.Table;
                     break;
                 case WeenieType.MissileLauncher:
-                    spells = LootTables.MissileSpells;
-                    cantrips = LootTables.MissileCantrips;
+                    spells = MissileSpells.Table;
+                    cantrips = MissileCantrips.Table;
                     break;
                 default:
                     spells = null;
@@ -989,80 +1005,77 @@ namespace ACE.Server.Factories
             wo.ItemMaxMana = GetMaxMana(numSpells, profile.Tier);
             wo.ItemCurMana = wo.ItemMaxMana;
 
-            int[] shuffledValues = new int[spells.Length];
-            for (int i = 0; i < spells.Length; i++)
-            {
-                shuffledValues[i] = i;
-            }
+            int[] shuffledValues = Enumerable.Range(0, spells.Length).ToArray();
 
             Shuffle(shuffledValues);
 
             if (numSpells - numCantrips > 0)
             {
-                for (int a = 0; a < numSpells - numCantrips; a++)
+                for (int i = 0; i < numSpells - numCantrips; i++)
                 {
                     int col = ThreadSafeRandom.Next(lowSpellTier - 1, highSpellTier - 1);
-                    int spellID = spells[shuffledValues[a]][col];
-                    wo.Biota.GetOrAddKnownSpell(spellID, wo.BiotaDatabaseLock, out _);
+                    SpellId spellID = spells[shuffledValues[i]][col];
+                    wo.Biota.GetOrAddKnownSpell((int)spellID, wo.BiotaDatabaseLock, out _);
                 }
             }
 
             // Per discord discussions: ALL armor/shields if it had any spells, had an Impen spell
-            if (isArmor == true)
+            if (isArmor)
             {
+                var impenSpells = SpellLevelProgression.Impenetrability;
+
                 // Ensure that one of the Impen spells was not already added
                 bool impenFound = false;
-                for (int a = 0; a < 8; a++)
+                for (int i = 0; i < 8; i++)
                 {
-                    impenFound = wo.Biota.SpellIsKnown(LootTables.ArmorSpells[armorSpellImpenIndex][a], wo.BiotaDatabaseLock);
-                    if (impenFound == true)
+                    if (wo.Biota.SpellIsKnown((int)impenSpells[i], wo.BiotaDatabaseLock))
+                    {
+                        impenFound = true;
                         break;
+                    }
                 }
-
-                if (impenFound == false)
+                if (!impenFound)
                 {
                     int col = ThreadSafeRandom.Next(lowSpellTier - 1, highSpellTier - 1);
-                    int spellID = LootTables.ArmorSpells[armorSpellImpenIndex][col];
-                    wo.Biota.GetOrAddKnownSpell(spellID, wo.BiotaDatabaseLock, out _);
+                    SpellId spellID = impenSpells[col];
+                    wo.Biota.GetOrAddKnownSpell((int)spellID, wo.BiotaDatabaseLock, out _);
                 }
             }
 
             if (numCantrips > 0)
             {
-                shuffledValues = new int[cantrips.Length];
-                for (int i = 0; i < cantrips.Length; i++)
-                {
-                    shuffledValues[i] = i;
-                }
+                shuffledValues = Enumerable.Range(0, cantrips.Length).ToArray();
                 Shuffle(shuffledValues);
+
                 int shuffledPlace = 0;
-                //minor cantripps
-                for (int a = 0; a < minorCantrips; a++)
+
+                // minor cantrips
+                for (var i = 0; i < minorCantrips; i++)
                 {
-                    int spellID = cantrips[shuffledValues[shuffledPlace]][0];
+                    SpellId spellID = cantrips[shuffledValues[shuffledPlace]][0];
                     shuffledPlace++;
-                    wo.Biota.GetOrAddKnownSpell(spellID, wo.BiotaDatabaseLock, out _);
+                    wo.Biota.GetOrAddKnownSpell((int)spellID, wo.BiotaDatabaseLock, out _);
                 }
-                //major cantrips
-                for (int a = 0; a < majorCantrips; a++)
+                // major cantrips
+                for (var i = 0; i < majorCantrips; i++)
                 {
-                    int spellID = cantrips[shuffledValues[shuffledPlace]][1];
+                    SpellId spellID = cantrips[shuffledValues[shuffledPlace]][1];
                     shuffledPlace++;
-                    wo.Biota.GetOrAddKnownSpell(spellID, wo.BiotaDatabaseLock, out _);
+                    wo.Biota.GetOrAddKnownSpell((int)spellID, wo.BiotaDatabaseLock, out _);
                 }
                 // epic cantrips
-                for (int a = 0; a < epicCantrips; a++)
+                for (var i = 0; i < epicCantrips; i++)
                 {
-                    int spellID = cantrips[shuffledValues[shuffledPlace]][2];
+                    SpellId spellID = cantrips[shuffledValues[shuffledPlace]][2];
                     shuffledPlace++;
-                    wo.Biota.GetOrAddKnownSpell(spellID, wo.BiotaDatabaseLock, out _);
+                    wo.Biota.GetOrAddKnownSpell((int)spellID, wo.BiotaDatabaseLock, out _);
                 }
-                //legendary cantrips
-                for (int a = 0; a < legendaryCantrips; a++)
+                // legendary cantrips
+                for (var i = 0; i < legendaryCantrips; i++)
                 {
-                    int spellID = cantrips[shuffledValues[shuffledPlace]][3];
+                    SpellId spellID = cantrips[shuffledValues[shuffledPlace]][3];
                     shuffledPlace++;
-                    wo.Biota.GetOrAddKnownSpell(spellID, wo.BiotaDatabaseLock, out _);
+                    wo.Biota.GetOrAddKnownSpell((int)spellID, wo.BiotaDatabaseLock, out _);
                 }
             }
             int spellcraft = GetSpellcraft(wo, numSpells, profile.Tier);
@@ -1599,7 +1612,7 @@ namespace ACE.Server.Factories
 
             // Spell Count Addon
             float spellAddonChance = num_spells * (20.0f / (num_spells + 2.0f));
-            float spellAddon = ThreadSafeRandom.Next(1.0f, spellAddonChance) * num_spells;
+            float spellAddon = (float)ThreadSafeRandom.Next(1.0f, spellAddonChance) * num_spells;
 
             float tArcane = itemspellcraft * heritage_mod * 1.9f + spellAddon + epicAddon + legAddon;
             tArcane /= rank_mod + 1.0f;
@@ -2031,7 +2044,7 @@ namespace ACE.Server.Factories
                 foreach (var color in colors)
                 {
                     probability += color.Probability;
-                    if (probability >= rng || probability == totalProbability)
+                    if (probability > rng || probability == totalProbability)
                     {
                         paletteTemplate = color.PaletteTemplate;
                         break;
@@ -2322,7 +2335,7 @@ namespace ACE.Server.Factories
                 return false;
 
             // secondary rng roll - pseudo curve table per tier
-            var roll = ChanceTables.Roll(tier);
+            var roll = QualityChance.Roll(tier);
 
             var bulk = isWeapon ? WeaponBulk : ArmorBulk;
             bulk *= (float)(wo.BulkMod ?? 1.0f);
@@ -2345,7 +2358,7 @@ namespace ACE.Server.Factories
 
         private static bool RollBurdenModChance(int tier)
         {
-            var chance = ChanceTables.QualityChancePerTier[tier - 1];
+            var chance = QualityChance.QualityChancePerTier[tier - 1];
 
             var rng = ThreadSafeRandom.Next(0.0f, 1.0f);
 
@@ -2354,16 +2367,17 @@ namespace ACE.Server.Factories
 
         private static void Shuffle<T>(T[] array)
         {
-            Random _r = new Random();
-            int n = array.Length;
-            for (int i = 0; i < n; i++)
+            // verified even distribution
+            for (var i = 0; i < array.Length; i++)
             {
-                int r = i + _r.Next(n - i);
-                T t = array[r];
-                array[r] = array[i];
-                array[i] = t;
+                var idx = ThreadSafeRandom.Next(i, array.Length - 1);
+
+                var temp = array[idx];
+                array[idx] = array[i];
+                array[i] = temp;
             }
         }
+
         private static WorldObject AssignCloakSpells(WorldObject wo, int cloakSpellId)
         {
             wo.ProcSpell = (uint)cloakSpellId;

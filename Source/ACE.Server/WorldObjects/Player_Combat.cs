@@ -307,7 +307,7 @@ namespace ACE.Server.WorldObjects
 
                     //Console.WriteLine($"NoStaminaUseChance: {noStaminaUseChance}");
 
-                    if (noStaminaUseChance < ThreadSafeRandom.Next(0.0f, 1.0f))
+                    if (noStaminaUseChance <= ThreadSafeRandom.Next(0.0f, 1.0f))
                         UpdateVitalDelta(Stamina, -1);
                 }
                 else
@@ -1044,7 +1044,9 @@ namespace ACE.Server.WorldObjects
                     return DamageType.Slash;
             }
 
-            return damageType.SelectDamageType();
+            var powerLevel = combatType == CombatType.Melee ? (float?)PowerLevel : null;
+
+            return damageType.SelectDamageType(powerLevel);
         }
 
         public WorldObject HandArmor => EquippedObjects.Values.FirstOrDefault(i => (i.ClothingPriority & CoverageMask.Hands) > 0);

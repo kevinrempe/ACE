@@ -177,7 +177,7 @@ namespace ACE.Server.Managers
                 return;
             }
 
-            var success = ThreadSafeRandom.Next(0.0f, 1.0f) <= successChance;
+            var success = ThreadSafeRandom.Next(0.0f, 1.0f) < successChance;
 
             CreateDestroyItems(player, recipe, source, target, success);
 
@@ -195,6 +195,12 @@ namespace ACE.Server.Managers
                     player.EnqueueBroadcast(updateObj, updateDesc);
                 else
                     player.Session.Network.EnqueueSend(updateObj);
+            }
+
+            if (success && recipe.Skill > 0 && recipe.Difficulty > 0)
+            {
+                var skill = player.GetCreatureSkill((Skill)recipe.Skill);
+                Proficiency.OnSuccessUse(player, skill, recipe.Difficulty);
             }
         }
 
@@ -324,7 +330,7 @@ namespace ACE.Server.Managers
 
         public static void DoTinkering(Player player, WorldObject tool, WorldObject target, Recipe recipe, float chance, bool incItemTinkered)
         {
-            var success = ThreadSafeRandom.Next(0.0f, 1.0f) <= chance;
+            var success = ThreadSafeRandom.Next(0.0f, 1.0f) < chance;
 
             var sourceName = Regex.Replace(tool.NameWithMaterial, @" \(\d+\)$", "");
 
@@ -564,7 +570,7 @@ namespace ACE.Server.Managers
                     target.DamageMod += 0.04f;
                     break;
                 case MaterialType.Granite:
-                    target.DamageVariance *= 0.8f;      // additive or multiplicative?
+                    //target.DamageVariance *= 0.8f;    // handled w/ lucky rabbits foot below
                     break;
                 case MaterialType.Oak:
                     target.WeaponTime = Math.Max(0, (target.WeaponTime ?? 0) - 50);
@@ -1011,8 +1017,8 @@ namespace ACE.Server.Managers
             var destroyTargetChance = success ? recipe.SuccessDestroyTargetChance : recipe.FailDestroyTargetChance;
             var destroySourceChance = success ? recipe.SuccessDestroySourceChance : recipe.FailDestroySourceChance;
 
-            var destroyTarget = ThreadSafeRandom.Next(0.0f, 1.0f) <= destroyTargetChance;
-            var destroySource = ThreadSafeRandom.Next(0.0f, 1.0f) <= destroySourceChance;
+            var destroyTarget = ThreadSafeRandom.Next(0.0f, 1.0f) < destroyTargetChance;
+            var destroySource = ThreadSafeRandom.Next(0.0f, 1.0f) < destroySourceChance;
 
             var createItem = success ? recipe.SuccessWCID : recipe.FailWCID;
             var createAmount = success ? recipe.SuccessAmount : recipe.FailAmount;
@@ -1161,10 +1167,10 @@ namespace ACE.Server.Managers
                         target.SetProperty(PropertyInt64.ItemTotalXp, itemTotalXp);
                         break;
 
+                    // Granite
                     // Lucky White Rabbit's Foot
                     case 0x3800001C:
-                        if (target.DamageVariance != null)
-                            target.DamageVariance = Math.Max(0, target.DamageVariance.Value - 0.2f);    // assuming this should be additive instead of multiplicative, tinkering for MaterialType.Granite could possibly be wrong
+                        target.DamageVariance *= 0.8f;
                         break;
                 }
 
