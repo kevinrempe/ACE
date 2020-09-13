@@ -4,6 +4,7 @@ using ACE.Common;
 using ACE.Database.Models.World;
 using ACE.Entity.Enum;
 using ACE.Entity.Enum.Properties;
+using ACE.Server.Entity;
 using ACE.Server.Factories.Tables;
 using ACE.Server.WorldObjects;
 
@@ -55,6 +56,7 @@ namespace ACE.Server.Factories
                 wo.GemCount = ThreadSafeRandom.Next(1, 5);
 
             wo.GemType = RollGemType(profile.Tier);
+
             wo.LongDesc = wo.Name;
             //wo.AppraisalLongDescDecoration = AppraisalLongDescDecorations.PrependWorkmanship | AppraisalLongDescDecorations.AppendGemInfo;
 
