@@ -8,7 +8,7 @@ namespace ACE.Server.Factories.Tables.Wcids
 {
     public static class TwoHandedWeaponWcids
     {
-        private static readonly ChanceTable<WeenieClassName> GreatAxes = new ChanceTable<WeenieClassName>()
+        private static ChanceTable<WeenieClassName> GreatAxes = new ChanceTable<WeenieClassName>()
         {
             // two-handed - axe
             ( WeenieClassName.ace41052_greataxe,          0.40f ),
@@ -18,7 +18,7 @@ namespace ACE.Server.Factories.Tables.Wcids
             ( WeenieClassName.ace41056_frostgreataxe,     0.15f ),
         };
 
-        private static readonly ChanceTable<WeenieClassName> GreatStarMaces = new ChanceTable<WeenieClassName>()
+        private static ChanceTable<WeenieClassName> GreatStarMaces = new ChanceTable<WeenieClassName>()
         {
             // two-handed - mace
             ( WeenieClassName.ace41057_greatstarmace,          0.40f ),
@@ -28,7 +28,7 @@ namespace ACE.Server.Factories.Tables.Wcids
             ( WeenieClassName.ace41061_frostgreatstarmace,     0.15f ),
         };
 
-        private static readonly ChanceTable<WeenieClassName> KhandaHandledMaces = new ChanceTable<WeenieClassName>()
+        private static ChanceTable<WeenieClassName> KhandaHandledMaces = new ChanceTable<WeenieClassName>()
         {
             // two-handed - mace
             ( WeenieClassName.ace41062_khandahandledmace,          0.40f ),
@@ -38,7 +38,7 @@ namespace ACE.Server.Factories.Tables.Wcids
             ( WeenieClassName.ace41066_frostkhandahandledmace,     0.15f ),
         };
 
-        private static readonly ChanceTable<WeenieClassName> Quadrelles = new ChanceTable<WeenieClassName>()
+        private static ChanceTable<WeenieClassName> Quadrelles = new ChanceTable<WeenieClassName>()
         {
             // two-handed - mace
             ( WeenieClassName.ace40623_quadrelle,          0.40f ),
@@ -48,7 +48,7 @@ namespace ACE.Server.Factories.Tables.Wcids
             ( WeenieClassName.ace40627_frostquadrelle,     0.15f ),
         };
 
-        private static readonly ChanceTable<WeenieClassName> Tetsubos = new ChanceTable<WeenieClassName>()
+        private static ChanceTable<WeenieClassName> Tetsubos = new ChanceTable<WeenieClassName>()
         {
             // two-handed - mace
             ( WeenieClassName.ace40635_tetsubo,          0.40f ),
@@ -58,7 +58,7 @@ namespace ACE.Server.Factories.Tables.Wcids
             ( WeenieClassName.ace40639_frosttetsubo,     0.15f ),
         };
 
-        private static readonly ChanceTable<WeenieClassName> Assagais = new ChanceTable<WeenieClassName>()
+        private static ChanceTable<WeenieClassName> Assagais = new ChanceTable<WeenieClassName>()
         {
             // two-handed - spear
             ( WeenieClassName.ace41036_assagai,          0.40f ),
@@ -68,7 +68,7 @@ namespace ACE.Server.Factories.Tables.Wcids
             ( WeenieClassName.ace41040_frostassagai,     0.15f ),
         };
 
-        private static readonly ChanceTable<WeenieClassName> Corsecas = new ChanceTable<WeenieClassName>()
+        private static ChanceTable<WeenieClassName> Corsecas = new ChanceTable<WeenieClassName>()
         {
             // two-handed - spear
             ( WeenieClassName.ace40818_corsesca,          0.40f ),
@@ -78,7 +78,7 @@ namespace ACE.Server.Factories.Tables.Wcids
             ( WeenieClassName.ace40822_frostcorsesca,     0.15f ),
         };
 
-        private static readonly ChanceTable<WeenieClassName> MagariYaris = new ChanceTable<WeenieClassName>()
+        private static ChanceTable<WeenieClassName> MagariYaris = new ChanceTable<WeenieClassName>()
         {
             // two-handed - spear
             ( WeenieClassName.ace41041_magariyari,          0.40f ),
@@ -88,7 +88,7 @@ namespace ACE.Server.Factories.Tables.Wcids
             ( WeenieClassName.ace41045_frostmagariyari,     0.15f ),
         };
 
-        private static readonly ChanceTable<WeenieClassName> Pikes = new ChanceTable<WeenieClassName>()
+        private static ChanceTable<WeenieClassName> Pikes = new ChanceTable<WeenieClassName>()
         {
             // two-handed - spear
             ( WeenieClassName.ace41046_pike,          0.40f ),
@@ -98,7 +98,7 @@ namespace ACE.Server.Factories.Tables.Wcids
             ( WeenieClassName.ace41050_frostpike,     0.15f ),
         };
 
-        private static readonly ChanceTable<WeenieClassName> Nodachis = new ChanceTable<WeenieClassName>()
+        private static ChanceTable<WeenieClassName> Nodachis = new ChanceTable<WeenieClassName>()
         {
             // two-handed - sword
             ( WeenieClassName.ace40760_nodachi,          0.40f ),
@@ -108,7 +108,7 @@ namespace ACE.Server.Factories.Tables.Wcids
             ( WeenieClassName.ace40764_frostnodachi,     0.15f ),
         };
 
-        private static readonly ChanceTable<WeenieClassName> Shashqas = new ChanceTable<WeenieClassName>()
+        private static ChanceTable<WeenieClassName> Shashqas = new ChanceTable<WeenieClassName>()
         {
             // two-handed - sword
             ( WeenieClassName.ace41067_shashqa,          0.40f ),
@@ -118,7 +118,7 @@ namespace ACE.Server.Factories.Tables.Wcids
             ( WeenieClassName.ace41071_frostshashqa,     0.15f ),
         };
 
-        private static readonly ChanceTable<WeenieClassName> Spadones = new ChanceTable<WeenieClassName>()
+        private static ChanceTable<WeenieClassName> Spadones = new ChanceTable<WeenieClassName>()
         {
             // two-handed - sword
             ( WeenieClassName.ace40618_spadone,          0.40f ),
@@ -128,28 +128,30 @@ namespace ACE.Server.Factories.Tables.Wcids
             ( WeenieClassName.ace40622_frostspadone,     0.15f ),
         };
 
-        private static readonly List<ChanceTable<WeenieClassName>> twoHandedWeaponTables = new List<ChanceTable<WeenieClassName>>()
+        private static readonly List<(ChanceTable<WeenieClassName> table, TreasureWeaponType weaponType)> twoHandedWeaponTables = new List<(ChanceTable<WeenieClassName>, TreasureWeaponType)>()
         {
-            GreatAxes,          // axe
-            GreatStarMaces,     // mace
-            KhandaHandledMaces,
-            Quadrelles,
-            Tetsubos,
-            Assagais,           // spear
-            Corsecas,
-            MagariYaris,
-            Pikes,
-            Nodachis,           // sword
-            Shashqas,
-            Spadones,
+            ( GreatAxes,          TreasureWeaponType.TwoHandedAxe ),
+            ( GreatStarMaces,     TreasureWeaponType.TwoHandedMace ),
+            ( KhandaHandledMaces, TreasureWeaponType.TwoHandedMace ),
+            ( Quadrelles,         TreasureWeaponType.TwoHandedMace ),
+            ( Tetsubos,           TreasureWeaponType.TwoHandedMace ),
+            ( Assagais,           TreasureWeaponType.TwoHandedSpear ),
+            ( Corsecas,           TreasureWeaponType.TwoHandedSpear ),
+            ( MagariYaris,        TreasureWeaponType.TwoHandedSpear ),
+            ( Pikes,              TreasureWeaponType.TwoHandedSpear ),
+            ( Nodachis,           TreasureWeaponType.TwoHandedSword ),
+            ( Shashqas,           TreasureWeaponType.TwoHandedSword ),
+            ( Spadones,           TreasureWeaponType.TwoHandedSword ),
         };
 
-        public static WeenieClassName Roll()
+        public static WeenieClassName Roll(out TreasureWeaponType weaponType)
         {
-            // even chance of selecting each weapon type
-            var weaponType = ThreadSafeRandom.Next(0, twoHandedWeaponTables.Count - 1);
+            // even chance of selecting each weapon table
+            var weaponTable = twoHandedWeaponTables[ThreadSafeRandom.Next(0, twoHandedWeaponTables.Count - 1)];
 
-            return twoHandedWeaponTables[weaponType].Roll();
+            weaponType = weaponTable.weaponType;
+
+            return weaponTable.table.Roll();
         }
     }
 }
