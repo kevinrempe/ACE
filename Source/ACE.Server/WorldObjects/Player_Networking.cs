@@ -45,9 +45,12 @@ namespace ACE.Server.WorldObjects
 
             if (!Account15Days)
             {
-                var accountTimeSpan = DateTime.UtcNow - Account.CreateTime;
-                if (accountTimeSpan.TotalDays >= 15)
+                var accountAge = DateTime.UtcNow - Account.CreateTime;
+
+                if (accountAge.TotalDays >= 15)
                     Account15Days = true;
+
+                ManageAccount15Days_HousePurchaseTimestamp();
             }
 
             if (PlayerKillerStatus == PlayerKillerStatus.PKLite && !PropertyManager.GetBool("pkl_server").Item)

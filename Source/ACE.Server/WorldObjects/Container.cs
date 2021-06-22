@@ -161,6 +161,8 @@ namespace ACE.Server.WorldObjects
                 if ((worldObjects[i].ContainerId ?? 0) == Biota.Id)
                 {
                     Inventory[worldObjects[i].Guid] = worldObjects[i];
+                    worldObjects[i].Container = this;
+
                     if (worldObjects[i].WeenieType != WeenieType.Container) // We skip over containers because we'll add their burden/value in the next loop.
                     {
                         EncumbranceVal += (worldObjects[i].EncumbranceVal ?? 0);
@@ -588,8 +590,11 @@ namespace ACE.Server.WorldObjects
             var itemGuids = Inventory.Keys.ToList();
             foreach (var itemGuid in itemGuids)
             {
-                if (!TryRemoveFromInventory(itemGuid, forceSave))
+                if (!TryRemoveFromInventory(itemGuid, out var item, forceSave))
                     success = false;
+
+                if (success)
+                    item.Destroy();
             }
             if (forceSave)
                 SaveBiotaToDatabase();
@@ -712,7 +717,11 @@ namespace ACE.Server.WorldObjects
 
         public virtual void Open(Player player)
         {
-            if (IsOpen) return;
+            if (IsOpen)
+            {
+                player.SendTransientError(InUseMessage);
+                return;
+            }
 
             player.LastOpenedContainerId = Guid;
 
